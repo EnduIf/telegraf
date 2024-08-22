@@ -1,4 +1,4 @@
-//go:build !custom || outputs || outputs.sql
+//go:build !custom || outputs || outputs.template_sql
 
 package all
 
