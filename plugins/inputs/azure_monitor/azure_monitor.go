@@ -4,14 +4,15 @@ package azure_monitor
 import (
 	_ "embed"
 	"fmt"
+	"sync"
+
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
-	"sync"
+	receiver "github.com/logzio/azure-monitor-metrics-receiver"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	receiver "github.com/logzio/azure-monitor-metrics-receiver"
 )
 
 type AzureMonitor struct {
@@ -20,9 +21,9 @@ type AzureMonitor struct {
 	ClientSecret         string                 `toml:"client_secret"`
 	TenantID             string                 `toml:"tenant_id"`
 	CloudOption          string                 `toml:"cloud_option,omitempty"`
-	ResourceTargets      []*ResourceTarget      `toml:"resource_target"`
-	ResourceGroupTargets []*ResourceGroupTarget `toml:"resource_group_target"`
-	SubscriptionTargets  []*Resource            `toml:"subscription_target"`
+	ResourceTargets      []*resourceTarget      `toml:"resource_target"`
+	ResourceGroupTargets []*resourceGroupTarget `toml:"resource_group_target"`
+	SubscriptionTargets  []*resource            `toml:"subscription_target"`
 	Log                  telegraf.Logger        `toml:"-"`
 
 	receiver     *receiver.AzureMonitorMetricsReceiver
@@ -30,18 +31,18 @@ type AzureMonitor struct {
 	azureClients *receiver.AzureClients
 }
 
-type ResourceTarget struct {
+type resourceTarget struct {
 	ResourceID   string   `toml:"resource_id"`
 	Metrics      []string `toml:"metrics"`
 	Aggregations []string `toml:"aggregations"`
 }
 
-type ResourceGroupTarget struct {
+type resourceGroupTarget struct {
 	ResourceGroup string      `toml:"resource_group"`
-	Resources     []*Resource `toml:"resource"`
+	Resources     []*resource `toml:"resource"`
 }
 
-type Resource struct {
+type resource struct {
 	ResourceType string   `toml:"resource_type"`
 	Metrics      []string `toml:"metrics"`
 	Aggregations []string `toml:"aggregations"`
@@ -57,11 +58,10 @@ type azureClientsCreator interface {
 //go:embed sample.conf
 var sampleConfig string
 
-func (am *AzureMonitor) SampleConfig() string {
+func (*AzureMonitor) SampleConfig() string {
 	return sampleConfig
 }
 
-// Init is for setup, and validating config.
 func (am *AzureMonitor) Init() error {
 	var clientOptions azcore.ClientOptions
 	switch am.CloudOption {
@@ -170,11 +170,8 @@ func (am *AzureMonitor) setReceiver() error {
 	return err
 }
 
-func (acm *azureClientsManager) createAzureClients(
-	subscriptionID string,
-	clientID string,
-	clientSecret string,
-	tenantID string,
+func (*azureClientsManager) createAzureClients(
+	subscriptionID, clientID, clientSecret, tenantID string,
 	clientOptions azcore.ClientOptions,
 ) (*receiver.AzureClients, error) {
 	if clientSecret != "" {

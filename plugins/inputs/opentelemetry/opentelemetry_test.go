@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/influxdata/influxdb-observability/otel2influx"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -24,10 +25,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/influxdata/influxdb-observability/otel2influx"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	tmetric "github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/testutil"
@@ -45,7 +44,7 @@ func TestOpenTelemetry(t *testing.T) {
 	defer plugin.Stop()
 
 	// Setup the OpenTelemetry exporter
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
 	exporter, err := otlpmetricgrpc.New(ctx,
@@ -86,7 +85,7 @@ func TestOpenTelemetry(t *testing.T) {
 		exesuffix = ".exe"
 	}
 	expected := []telegraf.Metric{
-		tmetric.New(
+		testutil.MustMetric(
 			"measurement-counter",
 			map[string]string{
 				"otel.library.name":      "library-name",
@@ -102,8 +101,13 @@ func TestOpenTelemetry(t *testing.T) {
 			telegraf.Counter,
 		),
 	}
+	options := []cmp.Option{
+		testutil.IgnoreTime(),
+		testutil.IgnoreFields("start_time_unix_nano"),
+		testutil.IgnoreTags("telemetry.sdk.version"),
+	}
 	actual := acc.GetTelegrafMetrics()
-	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime(), testutil.IgnoreFields("start_time_unix_nano"))
+	testutil.RequireMetricsEqual(t, expected, actual, options...)
 }
 
 func TestCases(t *testing.T) {
@@ -192,7 +196,7 @@ func TestCases(t *testing.T) {
 
 			// Send all data to the plugin
 			addr := plugin.listener.Addr().String()
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 
 			grpcClient, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))

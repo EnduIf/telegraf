@@ -127,7 +127,7 @@ func TestSetPrecision(t *testing.T) {
 
 func TestAddTrackingMetricGroupEmpty(t *testing.T) {
 	ch := make(chan telegraf.Metric, 10)
-	metrics := []telegraf.Metric{}
+	metrics := make([]telegraf.Metric, 0)
 	acc := NewAccumulator(&TestMetricMaker{}, ch).WithTracking(1)
 
 	id := acc.AddTrackingMetricGroup(metrics)
@@ -143,7 +143,7 @@ func TestAddTrackingMetricGroupEmpty(t *testing.T) {
 type TestMetricMaker struct {
 }
 
-func (tm *TestMetricMaker) Name() string {
+func (*TestMetricMaker) Name() string {
 	return "TestPlugin"
 }
 
@@ -151,10 +151,10 @@ func (tm *TestMetricMaker) LogName() string {
 	return tm.Name()
 }
 
-func (tm *TestMetricMaker) MakeMetric(metric telegraf.Metric) telegraf.Metric {
+func (*TestMetricMaker) MakeMetric(metric telegraf.Metric) telegraf.Metric {
 	return metric
 }
 
-func (tm *TestMetricMaker) Log() telegraf.Logger {
+func (*TestMetricMaker) Log() telegraf.Logger {
 	return logger.New("TestPlugin", "test", "")
 }

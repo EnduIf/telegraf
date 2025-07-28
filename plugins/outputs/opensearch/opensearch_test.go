@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/docker/go-connections/nat"
-	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/wait"
+
+	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 const servicePort = "9200"
@@ -110,28 +111,22 @@ func TestGetPipelineName(t *testing.T) {
 		Expected        string
 	}{
 		{
-			map[string]string{"tag1": "value1", "tag2": "value2"},
-			[]string{},
-			`{{.Tag "es-pipeline"}}`,
-			"myDefaultPipeline",
+			Tags:        map[string]string{"tag1": "value1", "tag2": "value2"},
+			UsePipeline: `{{.Tag "es-pipeline"}}`,
+			Expected:    "myDefaultPipeline",
 		},
 		{
-			map[string]string{"tag1": "value1", "tag2": "value2"},
-			[]string{},
-			``,
-			"",
+			Tags: map[string]string{"tag1": "value1", "tag2": "value2"},
 		},
 		{
-			map[string]string{"tag1": "value1", "es-pipeline": "myOtherPipeline"},
-			[]string{},
-			`{{.Tag "es-pipeline"}}`,
-			"myOtherPipeline",
+			Tags:        map[string]string{"tag1": "value1", "es-pipeline": "myOtherPipeline"},
+			UsePipeline: `{{.Tag "es-pipeline"}}`,
+			Expected:    "myOtherPipeline",
 		},
 		{
-			map[string]string{"tag1": "pipeline2", "es-pipeline": "myOtherPipeline"},
-			[]string{},
-			`{{.Tag "tag1"}}`,
-			"pipeline2",
+			Tags:        map[string]string{"tag1": "pipeline2", "es-pipeline": "myOtherPipeline"},
+			UsePipeline: `{{.Tag "tag1"}}`,
+			Expected:    "pipeline2",
 		},
 	}
 	for _, test := range tests {
@@ -154,14 +149,26 @@ func TestRequestHeaderWhenGzipIsEnabled(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/_bulk":
-			require.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
-			require.Equal(t, "gzip", r.Header.Get("Accept-Encoding"))
-			_, err := w.Write([]byte("{}"))
-			require.NoError(t, err)
+			if contentHeader := r.Header.Get("Content-Encoding"); contentHeader != "gzip" {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Errorf("Not equal, expected: %q, actual: %q", "gzip", contentHeader)
+				return
+			}
+			if acceptHeader := r.Header.Get("Accept-Encoding"); acceptHeader != "gzip" {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Errorf("Not equal, expected: %q, actual: %q", "gzip", acceptHeader)
+				return
+			}
+			if _, err := w.Write([]byte("{}")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+			}
 			return
 		default:
-			_, err := w.Write([]byte(`{"version": {"number": "7.8"}}`))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(`{"version": {"number": "7.8"}}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+			}
 			return
 		}
 	}))
@@ -194,13 +201,21 @@ func TestRequestHeaderWhenGzipIsDisabled(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/_bulk":
-			require.NotEqual(t, "gzip", r.Header.Get("Content-Encoding"))
-			_, err := w.Write([]byte("{}"))
-			require.NoError(t, err)
+			if contentHeader := r.Header.Get("Content-Encoding"); contentHeader == "gzip" {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Errorf("Not equal, expected: %q, actual: %q", "gzip", contentHeader)
+				return
+			}
+			if _, err := w.Write([]byte("{}")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+			}
 			return
 		default:
-			_, err := w.Write([]byte(`{"version": {"number": "7.8"}}`))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(`{"version": {"number": "7.8"}}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+			}
 			return
 		}
 	}))
@@ -230,13 +245,21 @@ func TestAuthorizationHeaderWhenBearerTokenIsPresent(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/_bulk":
-			require.Equal(t, "Bearer 0123456789abcdef", r.Header.Get("Authorization"))
-			_, err := w.Write([]byte("{}"))
-			require.NoError(t, err)
+			if authHeader := r.Header.Get("Authorization"); authHeader != "Bearer 0123456789abcdef" {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Errorf("Not equal, expected: %q, actual: %q", "Bearer 0123456789abcdef", authHeader)
+				return
+			}
+			if _, err := w.Write([]byte("{}")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+			}
 			return
 		default:
-			_, err := w.Write([]byte(`{"version": {"number": "7.8"}}`))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(`{"version": {"number": "7.8"}}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+			}
 			return
 		}
 	}))
@@ -290,13 +313,21 @@ func TestDisconnectedServerOnWrite(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/_bulk":
-			require.Equal(t, "Bearer 0123456789abcdef", r.Header.Get("Authorization"))
-			_, err := w.Write([]byte("{}"))
-			require.NoError(t, err)
-			return
+			if authHeader := r.Header.Get("Authorization"); authHeader != "Bearer 0123456789abcdef" {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Errorf("Not equal, expected: %q, actual: %q", "Bearer 0123456789abcdef", authHeader)
+				return
+			}
+			if _, err := w.Write([]byte("{}")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		default:
-			_, err := w.Write([]byte(`{"version": {"number": "7.8"}}`))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(`{"version": {"number": "7.8"}}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+			}
 			return
 		}
 	}))

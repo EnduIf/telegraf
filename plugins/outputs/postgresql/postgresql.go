@@ -51,6 +51,7 @@ type Postgresql struct {
 	Uint64Type                 string                  `toml:"uint64_type"`
 	RetryMaxBackoff            config.Duration         `toml:"retry_max_backoff"`
 	TagCacheSize               int                     `toml:"tag_cache_size"`
+	ColumnNameLenLimit         int                     `toml:"column_name_length_limit"`
 	LogLevel                   string                  `toml:"log_level"`
 	Logger                     telegraf.Logger         `toml:"-"`
 
@@ -73,7 +74,7 @@ type Postgresql struct {
 	tagsJSONColumn   utils.Column
 }
 
-func (p *Postgresql) SampleConfig() string {
+func (*Postgresql) SampleConfig() string {
 	return sampleConfig
 }
 
@@ -336,7 +337,7 @@ func isTempError(err error) bool {
 		errClass := pgErr.Code[:2]
 		switch errClass {
 		case "23": // Integrity Constraint Violation
-			//23505 - unique_violation
+			// 23505 - unique_violation
 			if pgErr.Code == "23505" && strings.Contains(err.Error(), "pg_type_typname_nsp_index") {
 				// Happens when you try to create 2 tables simultaneously.
 				return true
@@ -418,7 +419,7 @@ func (p *Postgresql) writeMetricsFromMeasure(ctx context.Context, db dbh, tableS
 	}
 
 	if p.TagsAsForeignKeys {
-		if err = p.writeTagTable(ctx, db, tableSource); err != nil {
+		if err = writeTagTable(ctx, db, tableSource); err != nil {
 			if p.ForeignTagConstraint {
 				return fmt.Errorf("writing to tag table %q: %w", tableSource.Name()+p.TagTableSuffix, err)
 			}
@@ -436,7 +437,7 @@ func (p *Postgresql) writeMetricsFromMeasure(ctx context.Context, db dbh, tableS
 	return nil
 }
 
-func (p *Postgresql) writeTagTable(ctx context.Context, db dbh, tableSource *TableSource) error {
+func writeTagTable(ctx context.Context, db dbh, tableSource *TableSource) error {
 	ttsrc := NewTagTableSource(tableSource)
 
 	// Check whether we have any tags to insert

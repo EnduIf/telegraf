@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/shirou/gopsutil/v4/disk"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/filter"
+	"github.com/influxdata/telegraf/plugins/common/psutil"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/inputs/system"
 )
 
 //go:embed sample.conf
@@ -20,11 +23,6 @@ var (
 	varRegex = regexp.MustCompile(`\$(?:\w+|\{\w+\})`)
 )
 
-// hasMeta reports whether s contains any special glob characters.
-func hasMeta(s string) bool {
-	return strings.ContainsAny(s, "*?[")
-}
-
 type DiskIO struct {
 	Devices          []string        `toml:"devices"`
 	DeviceTags       []string        `toml:"device_tags"`
@@ -32,11 +30,13 @@ type DiskIO struct {
 	SkipSerialNumber bool            `toml:"skip_serial_number"`
 	Log              telegraf.Logger `toml:"-"`
 
-	ps           system.PS
-	infoCache    map[string]diskInfoCache
-	deviceFilter filter.Filter
-	warnDiskName map[string]bool
-	warnDiskTags map[string]bool
+	ps                psutil.PS
+	infoCache         map[string]diskInfoCache
+	deviceFilter      filter.Filter
+	warnDiskName      map[string]bool
+	warnDiskTags      map[string]bool
+	lastIOCounterStat map[string]disk.IOCountersStat
+	lastCollectTime   time.Time
 }
 
 func (*DiskIO) SampleConfig() string {
@@ -57,6 +57,7 @@ func (d *DiskIO) Init() error {
 	d.infoCache = make(map[string]diskInfoCache)
 	d.warnDiskName = make(map[string]bool)
 	d.warnDiskTags = make(map[string]bool)
+	d.lastIOCounterStat = make(map[string]disk.IOCountersStat)
 
 	return nil
 }
@@ -73,14 +74,14 @@ func (d *DiskIO) Gather(acc telegraf.Accumulator) error {
 	if err != nil {
 		return fmt.Errorf("error getting disk io info: %w", err)
 	}
-
-	for _, io := range diskio {
+	collectTime := time.Now()
+	for k, io := range diskio {
 		match := false
 		if d.deviceFilter != nil && d.deviceFilter.Match(io.Name) {
 			match = true
 		}
 
-		tags := map[string]string{}
+		tags := make(map[string]string)
 		var devLinks []string
 		tags["name"], devLinks = d.diskName(io.Name)
 
@@ -125,10 +126,29 @@ func (d *DiskIO) Gather(acc telegraf.Accumulator) error {
 			"merged_reads":     io.MergedReadCount,
 			"merged_writes":    io.MergedWriteCount,
 		}
+		if lastValue, exists := d.lastIOCounterStat[k]; exists {
+			deltaRWCount := float64(io.ReadCount + io.WriteCount - lastValue.ReadCount - lastValue.WriteCount)
+			deltaRWTime := float64(io.ReadTime + io.WriteTime - lastValue.ReadTime - lastValue.WriteTime)
+			deltaIOTime := float64(io.IoTime - lastValue.IoTime)
+			if deltaRWCount > 0 {
+				fields["io_await"] = deltaRWTime / deltaRWCount
+				fields["io_svctm"] = deltaIOTime / deltaRWCount
+			}
+			itv := float64(collectTime.Sub(d.lastCollectTime).Milliseconds())
+			if itv > 0 {
+				fields["io_util"] = 100 * deltaIOTime / itv
+			}
+		}
 		acc.AddCounter("diskio", fields, tags)
 	}
-
+	d.lastCollectTime = collectTime
+	d.lastIOCounterStat = diskio
 	return nil
+}
+
+// hasMeta reports whether s contains any special glob characters.
+func hasMeta(s string) bool {
+	return strings.ContainsAny(s, "*?[")
 }
 
 func (d *DiskIO) diskName(devName string) (string, []string) {
@@ -187,7 +207,7 @@ func (d *DiskIO) diskTags(devName string) map[string]string {
 		return nil
 	}
 
-	tags := map[string]string{}
+	tags := make(map[string]string, len(d.DeviceTags))
 	for _, dt := range d.DeviceTags {
 		if v, ok := di[dt]; ok {
 			tags[dt] = v
@@ -198,7 +218,7 @@ func (d *DiskIO) diskTags(devName string) map[string]string {
 }
 
 func init() {
-	ps := system.NewSystemPS()
+	ps := psutil.NewSystemPS()
 	inputs.Add("diskio", func() telegraf.Input {
 		return &DiskIO{ps: ps, SkipSerialNumber: true}
 	})

@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
-	"github.com/influxdata/telegraf"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf"
 )
 
 func TestPluginDeprecation(t *testing.T) {
@@ -107,6 +108,12 @@ func TestPluginOptionDeprecation(t *testing.T) {
 			expected:      `Option "option" of plugin "test" deprecated since version 1.23.0 and will be removed in 2.0.0: please check`,
 		},
 		{
+			name:          "No removal info",
+			since:         "1.23.0",
+			expectedLevel: telegraf.Warn,
+			expected:      `Option "option" of plugin "test" deprecated since version 1.23.0 and will be removed in 2.0.0: please check`,
+		},
+		{
 			name:          "None",
 			expectedLevel: telegraf.None,
 			expected:      ``,
@@ -186,6 +193,13 @@ func TestPluginOptionValueDeprecation(t *testing.T) {
 			name:          "Warn level",
 			since:         "1.25.0",
 			removal:       "2.0.0",
+			value:         "foobar",
+			expected:      `Value "foobar" for option "option" of plugin "test" deprecated since version 1.25.0 and will be removed in 2.0.0: please check`,
+			expectedLevel: telegraf.Warn,
+		},
+		{
+			name:          "No removal info",
+			since:         "1.25.0",
 			value:         "foobar",
 			expected:      `Value "foobar" for option "option" of plugin "test" deprecated since version 1.25.0 and will be removed in 2.0.0: please check`,
 			expectedLevel: telegraf.Warn,

@@ -1,12 +1,18 @@
 # OpenTelemetry Input Plugin
 
-This plugin receives traces, metrics and logs from
-[OpenTelemetry](https://opentelemetry.io) clients and agents via gRPC.
+This service plugin receives traces, metrics, logs and profiles from
+[OpenTelemetry][opentelemetry] clients and compatible agents via gRPC.
+
+⭐ Telegraf v1.19.0
+🏷️ logging, messaging
+💻 all
+
+[opentelemetry]: https://opentelemetry.io
 
 ## Service Input <!-- @/docs/includes/service_input.md -->
 
 This plugin is a service input. Normal plugins gather metrics determined by the
-interval setting. Service plugins start a service to listens and waits for
+interval setting. Service plugins start a service to listen and wait for
 metrics or events to occur. Service plugins have two key differences from
 normal plugins:
 

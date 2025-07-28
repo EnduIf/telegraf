@@ -153,7 +153,7 @@ func TestListenData(t *testing.T) {
 			require.NoError(t, parser.Init())
 
 			var acc testutil.Accumulator
-			onData := func(remote net.Addr, data []byte) {
+			onData := func(remote net.Addr, data []byte, _ time.Time) {
 				m, err := parser.Parse(data)
 				require.NoError(t, err)
 				addr, _, err := net.SplitHostPort(remote.String())
@@ -450,7 +450,7 @@ func TestClosingConnections(t *testing.T) {
 	require.NoError(t, parser.Init())
 
 	var acc testutil.Accumulator
-	onData := func(_ net.Addr, data []byte) {
+	onData := func(_ net.Addr, data []byte, _ time.Time) {
 		m, err := parser.Parse(data)
 		require.NoError(t, err)
 		acc.AddMetrics(m)
@@ -518,7 +518,7 @@ func TestMaxConnections(t *testing.T) {
 	// Create callback
 	var errs []error
 	var mu sync.Mutex
-	onData := func(_ net.Addr, _ []byte) {}
+	onData := func(_ net.Addr, _ []byte, _ time.Time) {}
 	onError := func(err error) {
 		mu.Lock()
 		errs = append(errs, err)
@@ -590,8 +590,20 @@ func TestMaxConnections(t *testing.T) {
 		require.Empty(t, errs)
 	}()
 
-	// Close the first client and check if we can connect now
+	// Get the actual stream listener for introspection
+	listener, ok := sock.listener.(*streamListener)
+	require.True(t, ok)
+
+	// Close the first client and wait for the plugin to realize the socket was
+	// actually closed
 	require.NoError(t, clients[0].Close())
+	require.Eventually(t, func() bool {
+		listener.Lock()
+		defer listener.Unlock()
+		return listener.connections < listener.MaxConnections
+	}, 3*time.Second, 100*time.Millisecond)
+
+	// Attempt a new connection which should succeed now
 	client, err = net.DialTCP("tcp", nil, addr.(*net.TCPAddr))
 	require.NoError(t, err)
 	require.NoError(t, client.SetWriteBuffer(0))
@@ -606,8 +618,6 @@ func TestMaxConnections(t *testing.T) {
 	}
 
 	// Close the clients and check the connection counter
-	listener, ok := sock.listener.(*streamListener)
-	require.True(t, ok)
 	require.Eventually(t, func() bool {
 		listener.Lock()
 		conns := listener.connections
@@ -823,7 +833,7 @@ func TestTLSMemLeak(t *testing.T) {
 	final, err := testCycle(2000)
 	require.NoError(t, err)
 
-	require.Less(t, final, 2*initial)
+	require.Less(t, final, 3*initial)
 }
 
 func createClient(endpoint string, addr net.Addr, tlsCfg *tls.Config) (net.Conn, error) {

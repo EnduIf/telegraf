@@ -149,14 +149,7 @@ func setUpTestMux() http.Handler {
 	return mux
 }
 
-func checkOutput(
-	t *testing.T,
-	acc *testutil.Accumulator,
-	presentFields map[string]interface{},
-	presentTags map[string]interface{},
-	absentFields []string,
-	absentTags []string,
-) {
+func checkOutput(t *testing.T, acc *testutil.Accumulator, presentFields, presentTags map[string]interface{}, absentFields, absentTags []string) {
 	t.Helper()
 	if presentFields != nil {
 		checkFields(t, presentFields, acc)
@@ -177,11 +170,21 @@ func checkOutput(
 
 func TestHeaders(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cHeader := r.Header.Get("Content-Type")
-		uaHeader := r.Header.Get("User-Agent")
-		require.Equal(t, "Hello", r.Host)
-		require.Equal(t, "application/json", cHeader)
-		require.Equal(t, internal.ProductToken(), uaHeader)
+		if r.Host != "Hello" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "Hello", r.Host)
+			return
+		}
+		if cHeader := r.Header.Get("Content-Type"); cHeader != "application/json" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "application/json", cHeader)
+			return
+		}
+		if uaHeader := r.Header.Get("User-Agent"); uaHeader != internal.ProductToken() {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", internal.ProductToken(), uaHeader)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
@@ -697,7 +700,7 @@ func TestMethod(t *testing.T) {
 	absentFields = []string{"response_string_match"}
 	checkOutput(t, &acc, expectedFields, expectedTags, absentFields, nil)
 
-	//check that lowercase methods work correctly
+	// check that lowercase methods work correctly
 	h = &HTTPResponse{
 		Log:             testutil.Logger{},
 		URLs:            []string{ts.URL + "/mustbepostmethod"},
@@ -1122,8 +1125,11 @@ func TestRedirect(t *testing.T) {
 	ts.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Add("Location", "http://example.org")
 		w.WriteHeader(http.StatusMovedPermanently)
-		_, err := w.Write([]byte("test"))
-		require.NoError(t, err)
+		if _, err := w.Write([]byte("test")); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	})
 
 	h := &HTTPResponse{
@@ -1165,8 +1171,11 @@ func TestRedirect(t *testing.T) {
 
 func TestBasicAuth(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		aHeader := r.Header.Get("Authorization")
-		require.Equal(t, "Basic bWU6bXlwYXNzd29yZA==", aHeader)
+		if aHeader := r.Header.Get("Authorization"); aHeader != "Basic bWU6bXlwYXNzd29yZA==" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "Basic bWU6bXlwYXNzd29yZA==", aHeader)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
@@ -1343,7 +1352,11 @@ func TestStatusCodeAndStringMatchFail(t *testing.T) {
 
 func TestSNI(t *testing.T) {
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "super-special-hostname.example.com", r.TLS.ServerName)
+		if r.TLS.ServerName != "super-special-hostname.example.com" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "super-special-hostname.example.com", r.TLS.ServerName)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()

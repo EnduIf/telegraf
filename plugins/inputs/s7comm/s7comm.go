@@ -25,8 +25,6 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]+)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
-
 var (
 	regexAddr = regexp.MustCompile(addressRegexp)
 	// Area mapping taken from https://github.com/robinson/gos7/blob/master/client.go
@@ -48,7 +46,9 @@ var (
 		"I":  0x05, // Integer (16 bit)
 		"DW": 0x06, // Double Word (32 bit)
 		"DI": 0x07, // Double integer (32 bit)
+		"LI": 0x06, // Long integer (64 bit)
 		"R":  0x08, // IEEE 754 real (32 bit)
+		"LR": 0x06, // IEEE 754 double (64-bit)
 		// see https://support.industry.siemens.com/cs/document/36479/date_and_time-format-for-s7-?dti=0&lc=en-DE
 		"DT": 0x0F, // Date and time (7 byte)
 	}
@@ -60,32 +60,8 @@ var (
 	}
 )
 
-type metricFieldDefinition struct {
-	Name    string `toml:"name"`
-	Address string `toml:"address"`
-}
+const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]+)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
 
-type metricDefinition struct {
-	Name   string                  `toml:"name"`
-	Fields []metricFieldDefinition `toml:"fields"`
-	Tags   map[string]string       `toml:"tags"`
-}
-
-type converterFunc func([]byte) interface{}
-
-type batch struct {
-	items    []gos7.S7DataItem
-	mappings []fieldMapping
-}
-
-type fieldMapping struct {
-	measurement string
-	field       string
-	tags        map[string]string
-	convert     converterFunc
-}
-
-// S7comm represents the plugin
 type S7comm struct {
 	Server          string             `toml:"server"`
 	Rack            int                `toml:"rack"`
@@ -102,13 +78,35 @@ type S7comm struct {
 	batches []batch
 }
 
-// SampleConfig returns a basic configuration for the plugin
+type metricDefinition struct {
+	Name   string                  `toml:"name"`
+	Fields []metricFieldDefinition `toml:"fields"`
+	Tags   map[string]string       `toml:"tags"`
+}
+
+type metricFieldDefinition struct {
+	Name    string `toml:"name"`
+	Address string `toml:"address"`
+}
+
+type batch struct {
+	items    []gos7.S7DataItem
+	mappings []fieldMapping
+}
+
+type fieldMapping struct {
+	measurement string
+	field       string
+	tags        map[string]string
+	convert     converterFunc
+}
+
+type converterFunc func([]byte) interface{}
+
 func (*S7comm) SampleConfig() string {
 	return sampleConfig
 }
 
-// Init checks the config settings and prepares the plugin. It's called
-// once by the Telegraf agent after parsing the config settings.
 func (s *S7comm) Init() error {
 	// Check settings
 	if s.Server == "" {
@@ -150,8 +148,7 @@ func (s *S7comm) Init() error {
 	return s.createRequests()
 }
 
-// Start initializes the connection to the remote endpoint
-func (s *S7comm) Start(_ telegraf.Accumulator) error {
+func (s *S7comm) Start(telegraf.Accumulator) error {
 	s.Log.Debugf("Connecting to %q...", s.Server)
 	if err := s.handler.Connect(); err != nil {
 		return &internal.StartupError{
@@ -164,15 +161,6 @@ func (s *S7comm) Start(_ telegraf.Accumulator) error {
 	return nil
 }
 
-// Stop disconnects from the remote endpoint and cleans up
-func (s *S7comm) Stop() {
-	if s.handler != nil {
-		s.Log.Debugf("Disconnecting from %q...", s.handler.Address)
-		s.handler.Close()
-	}
-}
-
-// Gather collects the data from the device
 func (s *S7comm) Gather(acc telegraf.Accumulator) error {
 	timestamp := time.Now()
 	grouper := metric.NewSeriesGrouper()
@@ -208,7 +196,13 @@ func (s *S7comm) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-// Internal functions
+func (s *S7comm) Stop() {
+	if s.handler != nil {
+		s.Log.Debugf("Disconnecting from %q...", s.handler.Address)
+		s.handler.Close()
+	}
+}
+
 func (s *S7comm) createRequests() error {
 	seed := maphash.MakeSeed()
 	seenFields := make(map[uint64]bool)
@@ -368,6 +362,9 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		buflen = 2
 	case "DW", "DI", "R": // 32-bit types
 		buflen = 4
+	case "LR", "LI": // 64-bit types
+		buflen = 8
+		amount = 2
 	case "DT": // 7-byte
 		buflen = 7
 	case "S":

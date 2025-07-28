@@ -16,9 +16,12 @@ import (
 
 func TestGather(t *testing.T) {
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := w.Write([]byte("data")); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
-		_, err := w.Write([]byte("data"))
-		require.NoError(t, err)
 	})
 	c, destroy := fakeHTTPClient(h)
 	defer destroy()
@@ -34,8 +37,7 @@ func TestGather(t *testing.T) {
 			servers: []string{"http://abc", "https://def"},
 		},
 		{
-			name:    "Good case, 0 servers",
-			servers: []string{},
+			name: "Good case, 0 servers",
 		},
 		{
 			name:    "Good case nil",
@@ -55,9 +57,7 @@ func TestGather(t *testing.T) {
 }
 
 func TestParseXML(t *testing.T) {
-	n := &NeptuneApex{}
-	goodTime := time.Date(2018, 12, 22, 21, 55, 37, 0,
-		time.FixedZone("PST", 3600*-8))
+	goodTime := time.Date(2018, 12, 22, 21, 55, 37, 0, time.FixedZone("PST", 3600*-8))
 	tests := []struct {
 		name        string
 		xmlResponse []byte
@@ -67,7 +67,7 @@ func TestParseXML(t *testing.T) {
 	}{
 		{
 			name:        "Good test",
-			xmlResponse: []byte(APEX2016),
+			xmlResponse: []byte(apex2016),
 			wantMetrics: []telegraf.Metric{
 				testutil.MustMetric(
 					Measurement,
@@ -361,7 +361,7 @@ func TestParseXML(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var acc testutil.Accumulator
-			err := n.parseXML(&acc, test.xmlResponse)
+			err := parseXML(&acc, test.xmlResponse)
 			if test.wantErr {
 				require.Error(t, err, "expected error but got <nil>")
 				return
@@ -403,11 +403,13 @@ func TestSendRequest(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			h := http.HandlerFunc(func(
-				w http.ResponseWriter, _ *http.Request) {
+			h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(test.statusCode)
-				_, err := w.Write([]byte("data"))
-				require.NoError(t, err)
+				if _, err := w.Write([]byte("data")); err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					t.Error(err)
+					return
+				}
 			})
 			c, destroy := fakeHTTPClient(h)
 			defer destroy()
@@ -528,7 +530,7 @@ func fakeHTTPClient(h http.Handler) (*http.Client, func()) {
 }
 
 // Sample configuration from a 2016 version Neptune Apex.
-const APEX2016 = `<?xml version="1.0"?>
+const apex2016 = `<?xml version="1.0"?>
 <status software="5.04_7A18" hardware="1.0">
 <hostname>apex</hostname>
 <serial>AC5:12345</serial>

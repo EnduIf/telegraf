@@ -21,12 +21,7 @@ func (f *JSONFlattener) FlattenJSON(
 }
 
 // FullFlattenJSON flattens nested maps/interfaces into a fields map (including bools and string)
-func (f *JSONFlattener) FullFlattenJSON(
-	fieldName string,
-	v interface{},
-	convertString bool,
-	convertBool bool,
-) error {
+func (f *JSONFlattener) FullFlattenJSON(fieldName string, v interface{}, convertString, convertBool bool) error {
 	if f.Fields == nil {
 		f.Fields = make(map[string]interface{})
 	}
@@ -69,8 +64,7 @@ func (f *JSONFlattener) FullFlattenJSON(
 	case nil:
 		return nil
 	default:
-		return fmt.Errorf("JSON Flattener: got unexpected type %T with value %v (%s)",
-			t, t, fieldName)
+		return fmt.Errorf("json flattener: got unexpected type %T with value %v (%s)", t, t, fieldName)
 	}
 	return nil
 }

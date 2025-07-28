@@ -5,11 +5,12 @@ import (
 	"time"
 
 	mb "github.com/grid-x/modbus"
+	"github.com/stretchr/testify/require"
+	"github.com/tbrandon/mbserver"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
-	"github.com/tbrandon/mbserver"
 )
 
 func TestMetric(t *testing.T) {
@@ -371,7 +372,7 @@ func TestMetricAddressOverflow(t *testing.T) {
 		Controller:        "tcp://localhost:1502",
 		ConfigurationType: "metric",
 		Log:               logger,
-		Workarounds:       ModbusWorkarounds{ReadCoilsStartingAtZero: true},
+		Workarounds:       workarounds{ReadCoilsStartingAtZero: true},
 	}
 	plugin.Metrics = []metricDefinition{
 		{

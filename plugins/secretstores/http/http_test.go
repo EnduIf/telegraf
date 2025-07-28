@@ -62,8 +62,11 @@ func TestCases(t *testing.T) {
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/secrets" {
-					_, err = w.Write(input)
-					require.NoError(t, err)
+					if _, err = w.Write(input); err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						t.Error(err)
+						return
+					}
 				} else {
 					w.WriteHeader(http.StatusNotFound)
 				}
@@ -108,9 +111,9 @@ func TestSampleConfig(t *testing.T) {
 
 func TestInit(t *testing.T) {
 	plugin := &HTTP{
-		DecryptionConfig: DecryptionConfig{
+		decryptionConfig: decryptionConfig{
 			Cipher: "AES128/CBC/PKCS#5",
-			Aes: AesEncryptor{
+			Aes: aesEncryptor{
 				Key: config.NewSecret([]byte("7465737474657374657374746573740a")),
 				Vec: config.NewSecret([]byte("7465737474657374657374746573740a")),
 			},
@@ -123,7 +126,7 @@ func TestInitErrors(t *testing.T) {
 	plugin := &HTTP{Transformation: "{some: malformed"}
 	require.ErrorContains(t, plugin.Init(), "setting up data transformation failed")
 
-	plugin = &HTTP{DecryptionConfig: DecryptionConfig{Cipher: "non-existing/CBC/lala"}}
+	plugin = &HTTP{decryptionConfig: decryptionConfig{Cipher: "non-existing/CBC/lala"}}
 	require.ErrorContains(t, plugin.Init(), "creating decryptor failed: unknown cipher")
 }
 
@@ -136,9 +139,9 @@ func TestSetNotSupported(t *testing.T) {
 
 func TestGetErrors(t *testing.T) {
 	plugin := &HTTP{
-		DecryptionConfig: DecryptionConfig{
+		decryptionConfig: decryptionConfig{
 			Cipher: "AES256/CBC/PKCS#5",
-			Aes: AesEncryptor{
+			Aes: aesEncryptor{
 				Key: config.NewSecret([]byte("63238c069e3c5d6aaa20048c43ce4ed0a910eef95f22f55bacdddacafa06b656")),
 				Vec: config.NewSecret([]byte("61737570657273656372657469763432")),
 			},
@@ -156,16 +159,19 @@ func TestGetErrors(t *testing.T) {
 
 func TestResolver(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err := w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`))
-		require.NoError(t, err)
+		if _, err := w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
 	plugin := &HTTP{
 		URL: server.URL,
-		DecryptionConfig: DecryptionConfig{
+		decryptionConfig: decryptionConfig{
 			Cipher: "AES256/CBC/PKCS#5",
-			Aes: AesEncryptor{
+			Aes: aesEncryptor{
 				Key: config.NewSecret([]byte("63238c069e3c5d6aaa20048c43ce4ed0a910eef95f22f55bacdddacafa06b656")),
 				Vec: config.NewSecret([]byte("61737570657273656372657469763432")),
 			},
@@ -198,16 +204,19 @@ func TestGetResolverErrors(t *testing.T) {
 	dummy.Close()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err = w.Write([]byte(`[{"test": "aedMZXaLR246OHHjVtJKXQ=="}]`))
-		require.NoError(t, err)
+		if _, err = w.Write([]byte(`[{"test": "aedMZXaLR246OHHjVtJKXQ=="}]`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
 	plugin = &HTTP{
 		URL: server.URL,
-		DecryptionConfig: DecryptionConfig{
+		decryptionConfig: decryptionConfig{
 			Cipher: "AES256/CBC/PKCS#5",
-			Aes: AesEncryptor{
+			Aes: aesEncryptor{
 				Key: config.NewSecret([]byte("63238c069e3c5d6aaa20048c43ce4ed0a910eef95f22f55bacdddacafa06b656")),
 				Vec: config.NewSecret([]byte("61737570657273656372657469763432")),
 			},
@@ -232,16 +241,19 @@ func TestInvalidServerResponse(t *testing.T) {
 	defer dummy.Close()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err = w.Write([]byte(`[somerandomebytes`))
-		require.NoError(t, err)
+		if _, err = w.Write([]byte(`[somerandomebytes`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
 	plugin := &HTTP{
 		URL: server.URL,
-		DecryptionConfig: DecryptionConfig{
+		decryptionConfig: decryptionConfig{
 			Cipher: "AES256/CBC/PKCS#5",
-			Aes: AesEncryptor{
+			Aes: aesEncryptor{
 				Key: config.NewSecret([]byte("63238c069e3c5d6aaa20048c43ce4ed0a910eef95f22f55bacdddacafa06b656")),
 				Vec: config.NewSecret([]byte("61737570657273656372657469763432")),
 			},
@@ -267,8 +279,11 @@ func TestAdditionalHeaders(t *testing.T) {
 		if r.Host != "" {
 			actual.Add("host", r.Host)
 		}
-		_, err = w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`))
-		require.NoError(t, err)
+		if _, err = w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -278,9 +293,9 @@ func TestAdditionalHeaders(t *testing.T) {
 			"host": "a.host.com",
 			"foo":  "bar",
 		},
-		DecryptionConfig: DecryptionConfig{
+		decryptionConfig: decryptionConfig{
 			Cipher: "AES256/CBC/PKCS#5",
-			Aes: AesEncryptor{
+			Aes: aesEncryptor{
 				Key: config.NewSecret([]byte("63238c069e3c5d6aaa20048c43ce4ed0a910eef95f22f55bacdddacafa06b656")),
 				Vec: config.NewSecret([]byte("61737570657273656372657469763432")),
 			},
@@ -310,14 +325,20 @@ func TestServerReturnCodes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/", "/200":
-			_, err = w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			if _, err = w.Write([]byte(`{}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/201":
 			w.WriteHeader(201)
 		case "/300":
 			w.WriteHeader(300)
-			_, err = w.Write([]byte(`{}`))
-			require.NoError(t, err)
+			if _, err = w.Write([]byte(`{}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/401":
 			w.WriteHeader(401)
 		default:
@@ -357,8 +378,11 @@ func TestAuthenticationBasic(t *testing.T) {
 	var header http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header = r.Header
-		_, err = w.Write([]byte(`{}`))
-		require.NoError(t, err)
+		if _, err = w.Write([]byte(`{}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -385,8 +409,11 @@ func TestAuthenticationToken(t *testing.T) {
 	var header http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header = r.Header
-		_, err = w.Write([]byte(`{}`))
-		require.NoError(t, err)
+		if _, err = w.Write([]byte(`{}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 

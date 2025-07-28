@@ -19,13 +19,13 @@ import (
 
 // Decoder structure
 type sflowv5Decoder struct {
-	Log telegraf.Logger
+	log telegraf.Logger
 
 	warnedCounterRaw map[uint32]bool
 	warnedFlowRaw    map[int64]bool
 }
 
-func (d *sflowv5Decoder) Init() error {
+func (d *sflowv5Decoder) init() error {
 	if err := initL4ProtoMapping(); err != nil {
 		return fmt.Errorf("initializing layer 4 protocol mapping failed: %w", err)
 	}
@@ -35,7 +35,7 @@ func (d *sflowv5Decoder) Init() error {
 	return nil
 }
 
-func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric, error) {
+func (d *sflowv5Decoder) decode(srcIP net.IP, payload []byte) ([]telegraf.Metric, error) {
 	t := time.Now()
 	src := srcIP.String()
 
@@ -369,8 +369,8 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 	for _, pkt := range packet.Layers() {
 		switch l := pkt.(type) {
 		case *layers.Ethernet:
-			fields["in_src_mac"] = l.SrcMAC
-			fields["out_dst_mac"] = l.DstMAC
+			fields["in_src_mac"] = l.SrcMAC.String()
+			fields["out_dst_mac"] = l.DstMAC.String()
 			fields["datalink_frame_type"] = l.EthernetType.String()
 			if l.Length > 0 {
 				fields["eth_header_len"] = l.Length
@@ -380,7 +380,7 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			fields["vlan_priority"] = l.Priority
 			fields["vlan_drop_eligible"] = l.DropEligible
 		case *layers.IPv4:
-			fields["ip_version"] = l.Version
+			fields["ip_version"] = decodePacketIPVersion(l.Version)
 			fields["ipv4_inet_header_len"] = l.IHL
 			fields["src_tos"] = l.TOS
 			fields["ipv4_total_len"] = l.Length
@@ -391,19 +391,20 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			fields["dst"] = l.DstIP.String()
 
 			flags := []byte("........")
-			switch {
-			case l.Flags&layers.IPv4EvilBit > 0:
+			if l.Flags&layers.IPv4EvilBit > 0 {
 				flags[7] = byte('E')
-			case l.Flags&layers.IPv4DontFragment > 0:
+			}
+			if l.Flags&layers.IPv4DontFragment > 0 {
 				flags[6] = byte('D')
-			case l.Flags&layers.IPv4MoreFragments > 0:
+			}
+			if l.Flags&layers.IPv4MoreFragments > 0 {
 				flags[5] = byte('M')
 			}
 			fields["fragment_flags"] = string(flags)
 			fields["fragment_offset"] = l.FragOffset
 			fields["ip_total_len"] = l.Length
 		case *layers.IPv6:
-			fields["ip_version"] = l.Version
+			fields["ip_version"] = decodePacketIPVersion(l.Version)
 			fields["ipv6_total_len"] = l.Length
 			fields["ttl"] = l.HopLimit
 			fields["protocol"] = mapL4Proto(uint8(l.NextHeader))
@@ -411,35 +412,41 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			fields["dst"] = l.DstIP.String()
 			fields["ip_total_len"] = l.Length
 		case *layers.TCP:
-			fields["src_port"] = l.SrcPort
-			fields["dst_port"] = l.DstPort
+			fields["src_port"] = uint16(l.SrcPort)
+			fields["dst_port"] = uint16(l.DstPort)
 			fields["tcp_seq_number"] = l.Seq
 			fields["tcp_ack_number"] = l.Ack
 			fields["tcp_window_size"] = l.Window
 			fields["tcp_urgent_ptr"] = l.Urgent
 			flags := []byte("........")
-			switch {
-			case l.FIN:
+			if l.FIN {
 				flags[7] = byte('F')
-			case l.SYN:
+			}
+			if l.SYN {
 				flags[6] = byte('S')
-			case l.RST:
+			}
+			if l.RST {
 				flags[5] = byte('R')
-			case l.PSH:
+			}
+			if l.PSH {
 				flags[4] = byte('P')
-			case l.ACK:
+			}
+			if l.ACK {
 				flags[3] = byte('A')
-			case l.URG:
+			}
+			if l.URG {
 				flags[2] = byte('U')
-			case l.ECE:
+			}
+			if l.ECE {
 				flags[1] = byte('E')
-			case l.CWR:
+			}
+			if l.CWR {
 				flags[0] = byte('C')
 			}
 			fields["tcp_flags"] = string(flags)
 		case *layers.UDP:
-			fields["src_port"] = l.SrcPort
-			fields["dst_port"] = l.DstPort
+			fields["src_port"] = uint16(l.SrcPort)
+			fields["dst_port"] = uint16(l.DstPort)
 			fields["ip_total_len"] = l.Length
 		case *gopacket.Payload:
 			// Ignore the payload
@@ -448,11 +455,11 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			if !d.warnedFlowRaw[ltype] {
 				contents := hex.EncodeToString(pkt.LayerContents())
 				payload := hex.EncodeToString(pkt.LayerPayload())
-				d.Log.Warnf("Unknown flow raw flow message %s (%d):", pkt.LayerType().String(), pkt.LayerType())
-				d.Log.Warnf("  contents: %s", contents)
-				d.Log.Warnf("  payload:  %s", payload)
+				d.log.Warnf("Unknown flow raw flow message %s (%d):", pkt.LayerType().String(), pkt.LayerType())
+				d.log.Warnf("  contents: %s", contents)
+				d.log.Warnf("  payload:  %s", payload)
 
-				d.Log.Warn("This message is only printed once.")
+				d.log.Warn("This message is only printed once.")
 			}
 			d.warnedFlowRaw[ltype] = true
 		}
@@ -524,8 +531,8 @@ func (d *sflowv5Decoder) decodeCounterRecords(records []sflow.CounterRecord) (ma
 			default:
 				if !d.warnedCounterRaw[r.Header.DataFormat] {
 					data := hex.EncodeToString(record.Data)
-					d.Log.Warnf("Unknown counter raw flow message %d: %s", r.Header.DataFormat, data)
-					d.Log.Warn("This message is only printed once.")
+					d.log.Warnf("Unknown counter raw flow message %d: %s", r.Header.DataFormat, data)
+					d.log.Warn("This message is only printed once.")
 				}
 				d.warnedCounterRaw[r.Header.DataFormat] = true
 			}

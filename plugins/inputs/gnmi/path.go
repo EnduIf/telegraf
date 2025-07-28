@@ -3,7 +3,7 @@ package gnmi
 import (
 	"strings"
 
-	gnmiLib "github.com/openconfig/gnmi/proto/gnmi"
+	"github.com/openconfig/gnmi/proto/gnmi"
 )
 
 type keySegment struct {
@@ -29,8 +29,16 @@ func newInfoFromString(path string) *pathInfo {
 		return &pathInfo{}
 	}
 
-	info := &pathInfo{}
-	for _, part := range strings.Split(path, "/") {
+	parts := strings.Split(path, "/")
+
+	var origin string
+	if strings.HasSuffix(parts[0], ":") {
+		origin = strings.TrimSuffix(parts[0], ":")
+		parts = parts[1:]
+	}
+
+	info := &pathInfo{origin: origin}
+	for _, part := range parts {
 		if part == "" {
 			continue
 		}
@@ -41,7 +49,7 @@ func newInfoFromString(path string) *pathInfo {
 	return info
 }
 
-func newInfoFromPathWithoutKeys(path *gnmiLib.Path) *pathInfo {
+func newInfoFromPathWithoutKeys(path *gnmi.Path) *pathInfo {
 	info := &pathInfo{
 		origin:   path.Origin,
 		segments: make([]segment, 0, len(path.Elem)),
@@ -57,7 +65,7 @@ func newInfoFromPathWithoutKeys(path *gnmiLib.Path) *pathInfo {
 	return info
 }
 
-func newInfoFromPath(paths ...*gnmiLib.Path) *pathInfo {
+func newInfoFromPath(paths ...*gnmi.Path) *pathInfo {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -73,10 +81,9 @@ func newInfoFromPath(paths ...*gnmiLib.Path) *pathInfo {
 			continue
 		}
 		for _, elem := range p.Elem {
-			if elem.Name == "" {
-				continue
+			if elem.Name != "" {
+				info.segments = append(info.segments, segment{id: elem.Name})
 			}
-			info.segments = append(info.segments, segment{id: elem.Name})
 
 			if len(elem.Key) == 0 {
 				continue
@@ -101,12 +108,13 @@ func (pi *pathInfo) empty() bool {
 	return len(pi.segments) == 0
 }
 
-func (pi *pathInfo) append(paths ...*gnmiLib.Path) *pathInfo {
+func (pi *pathInfo) append(paths ...*gnmi.Path) *pathInfo {
 	// Copy the existing info
+	segments := make([]segment, 0, len(pi.segments))
 	path := &pathInfo{
 		origin:    pi.origin,
 		target:    pi.target,
-		segments:  append([]segment{}, pi.segments...),
+		segments:  append(segments, pi.segments...),
 		keyValues: make([]keySegment, 0, len(pi.keyValues)),
 	}
 	for _, elem := range pi.keyValues {
@@ -124,10 +132,9 @@ func (pi *pathInfo) append(paths ...*gnmiLib.Path) *pathInfo {
 	// Add the new segments
 	for _, p := range paths {
 		for _, elem := range p.Elem {
-			if elem.Name == "" {
-				continue
+			if elem.Name != "" {
+				path.segments = append(path.segments, segment{id: elem.Name})
 			}
-			path.segments = append(path.segments, segment{id: elem.Name})
 
 			if len(elem.Key) == 0 {
 				continue
@@ -150,10 +157,11 @@ func (pi *pathInfo) append(paths ...*gnmiLib.Path) *pathInfo {
 
 func (pi *pathInfo) appendSegments(segments ...string) *pathInfo {
 	// Copy the existing info
+	seg := make([]segment, 0, len(segments))
 	path := &pathInfo{
 		origin:    pi.origin,
 		target:    pi.target,
-		segments:  append([]segment{}, pi.segments...),
+		segments:  append(seg, pi.segments...),
 		keyValues: make([]keySegment, 0, len(pi.keyValues)),
 	}
 	for _, elem := range pi.keyValues {
@@ -187,16 +195,10 @@ func (pi *pathInfo) normalize() {
 
 	// Extract namespaces from segments
 	for i, s := range pi.segments {
-		if ns, id, found := strings.Cut(s.id, ":"); found {
+		if ns, id, found := strings.Cut(s.id, ":"); found && strings.Count(s.id, ":") == 1 {
 			pi.segments[i].namespace = ns
 			pi.segments[i].id = id
 		}
-	}
-
-	// Some devices supply the origin as part of the first path element,
-	// so try to find and extract it there.
-	if pi.segments[0].namespace != "" {
-		pi.origin = pi.segments[0].namespace
 	}
 
 	// Remove empty segments
@@ -209,7 +211,20 @@ func (pi *pathInfo) normalize() {
 	pi.segments = segments
 }
 
-func (pi *pathInfo) equalsPathNoKeys(path *gnmiLib.Path) bool {
+func (pi *pathInfo) enforceFirstNamespaceAsOrigin() {
+	if len(pi.segments) == 0 {
+		return
+	}
+
+	// Some devices supply the origin as part of the first path element,
+	// so try to find and extract it there.
+	if pi.segments[0].namespace != "" {
+		pi.origin = pi.segments[0].namespace
+		pi.segments[0].namespace = ""
+	}
+}
+
+func (pi *pathInfo) equalsPathNoKeys(path *gnmi.Path) bool {
 	if len(pi.segments) != len(path.Elem) {
 		return false
 	}
@@ -290,7 +305,7 @@ func (pi *pathInfo) keepCommonPart(path *pathInfo) {
 	pi.segments = pi.segments[:matchLen]
 }
 
-func (pi *pathInfo) Dir() string {
+func (pi *pathInfo) dir() string {
 	if len(pi.segments) <= 1 {
 		return ""
 	}
@@ -309,7 +324,7 @@ func (pi *pathInfo) Dir() string {
 	return dir
 }
 
-func (pi *pathInfo) Base() string {
+func (pi *pathInfo) base() string {
 	if len(pi.segments) == 0 {
 		return ""
 	}
@@ -321,7 +336,7 @@ func (pi *pathInfo) Base() string {
 	return s.id
 }
 
-func (pi *pathInfo) Path() (origin, path string) {
+func (pi *pathInfo) path() (origin, path string) {
 	if len(pi.segments) == 0 {
 		return pi.origin, "/"
 	}
@@ -333,7 +348,7 @@ func (pi *pathInfo) Path() (origin, path string) {
 	return pi.origin, path
 }
 
-func (pi *pathInfo) FullPath() string {
+func (pi *pathInfo) fullPath() string {
 	var path string
 	if pi.origin != "" {
 		path = pi.origin + ":"
@@ -342,9 +357,7 @@ func (pi *pathInfo) FullPath() string {
 		return path
 	}
 
-	path += "/" + pi.segments[0].id
-
-	for _, s := range pi.segments[1:] {
+	for _, s := range pi.segments {
 		if s.namespace != "" {
 			path += "/" + s.namespace + ":" + s.id
 		} else {
@@ -360,14 +373,14 @@ func (pi *pathInfo) String() string {
 		return ""
 	}
 
-	origin, path := pi.Path()
+	origin, path := pi.path()
 	if origin != "" {
 		return origin + ":" + path
 	}
 	return path
 }
 
-func (pi *pathInfo) Tags(pathPrefix bool) map[string]string {
+func (pi *pathInfo) tags(pathPrefix bool) map[string]string {
 	tags := make(map[string]string, len(pi.keyValues))
 	for _, s := range pi.keyValues {
 		var prefix string

@@ -11,6 +11,7 @@ import (
 	"cloud.google.com/go/bigquery"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/option"
+	"google.golang.org/api/option/internaloption"
 
 	"github.com/influxdata/telegraf/testutil"
 )
@@ -252,10 +253,11 @@ func (b *BigQuery) setUpTestClientWithJSON(endpointURL string, credentialsJSON [
 	noAuth := option.WithoutAuthentication()
 	endpoint := option.WithEndpoint(endpointURL)
 	credentials := option.WithCredentialsJSON(credentialsJSON)
+	skipValidate := internaloption.SkipDialSettingsValidation()
 
 	ctx := context.Background()
 
-	c, err := bigquery.NewClient(ctx, b.Project, credentials, noAuth, endpoint)
+	c, err := bigquery.NewClient(ctx, b.Project, credentials, noAuth, endpoint, skipValidate)
 
 	b.client = c
 	return err
@@ -269,19 +271,32 @@ func localBigQueryServer(t *testing.T) *httptest.Server {
 		case "/projects/test-project/datasets/test-dataset/tables/test1/insertAll",
 			"/projects/test-project/datasets/test-dataset/tables/test-metrics/insertAll":
 			decoder := json.NewDecoder(r.Body)
-			require.NoError(t, decoder.Decode(&receivedBody))
+			if err := decoder.Decode(&receivedBody); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 
 			w.WriteHeader(http.StatusOK)
-			_, err := w.Write([]byte(successfulResponse))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(successfulResponse)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/projects/test-project/datasets/test-dataset/tables/test-metrics":
 			w.WriteHeader(http.StatusOK)
-			_, err := w.Write([]byte("{}"))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte("{}")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
-			_, err := w.Write([]byte(r.URL.String()))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(r.URL.String())); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		}
 	})
 

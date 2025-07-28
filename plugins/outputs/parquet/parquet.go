@@ -9,11 +9,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/apache/arrow/go/v18/arrow"
-	"github.com/apache/arrow/go/v18/arrow/array"
-	"github.com/apache/arrow/go/v18/arrow/memory"
-	"github.com/apache/arrow/go/v18/parquet"
-	"github.com/apache/arrow/go/v18/parquet/pqarrow"
+	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/apache/arrow-go/v18/arrow/array"
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/pqarrow"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/outputs"
@@ -63,7 +64,7 @@ func (p *Parquet) Init() error {
 	return nil
 }
 
-func (p *Parquet) Connect() error {
+func (*Parquet) Connect() error {
 	return nil
 }
 
@@ -275,7 +276,7 @@ func (p *Parquet) createSchema(metrics []telegraf.Metric) (*arrow.Schema, error)
 	return arrow.NewSchema(fields, nil), nil
 }
 
-func (p *Parquet) createWriter(name string, filename string, schema *arrow.Schema) (*pqarrow.FileWriter, error) {
+func (p *Parquet) createWriter(name, filename string, schema *arrow.Schema) (*pqarrow.FileWriter, error) {
 	if _, err := os.Stat(filename); err == nil {
 		now := time.Now()
 		rotatedFilename := fmt.Sprintf("%s/%s-%s-%s.parquet", p.Directory, name, now.Format("2006-01-02"), strconv.FormatInt(now.Unix(), 10))

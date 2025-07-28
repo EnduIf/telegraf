@@ -8,8 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/influxdata/telegraf"
 	"golang.org/x/sys/windows/svc/eventlog"
+
+	"github.com/influxdata/telegraf"
 )
 
 const (
@@ -24,16 +25,23 @@ type eventLogger struct {
 }
 
 func (l *eventLogger) Close() error {
-	return l.eventlog.Close()
+	if l.eventlog == nil {
+		return nil
+	}
+	if err := l.eventlog.Close(); err != nil {
+		return err
+	}
+	l.eventlog = nil
+	return nil
 }
 
-func (l *eventLogger) Print(level telegraf.LogLevel, _ time.Time, prefix string, args ...interface{}) {
+func (l *eventLogger) Print(level telegraf.LogLevel, _ time.Time, prefix string, _ map[string]interface{}, args ...interface{}) {
 	// Skip debug and beyond as they cannot be logged
 	if level >= telegraf.Debug {
 		return
 	}
 
-	msg := level.Indicator() + " " + prefix + fmt.Sprint(args...)
+	msg := prefix + fmt.Sprint(args...)
 
 	var err error
 	switch level {
@@ -47,6 +55,8 @@ func (l *eventLogger) Print(level telegraf.LogLevel, _ time.Time, prefix string,
 	if err != nil {
 		l.errlog.Printf("E! Writing log message failed: %v", err)
 	}
+
+	// TODO attributes...
 }
 
 func createEventLogger(cfg *Config) (sink, error) {

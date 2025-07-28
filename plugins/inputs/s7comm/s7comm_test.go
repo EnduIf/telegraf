@@ -564,6 +564,76 @@ func TestFieldMappings(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "single field long integer",
+			configs: []metricDefinition{
+				{
+					Name: "test",
+					Fields: []metricFieldDefinition{
+						{
+							Name:    "foo",
+							Address: "DB5.LI3",
+						},
+					},
+				},
+			},
+			expected: []batch{
+				{
+					items: []gos7.S7DataItem{
+						{
+							Area:     0x84,
+							WordLen:  0x06,
+							DBNumber: 5,
+							Start:    3,
+							Amount:   2,
+							Data:     make([]byte, 8),
+						},
+					},
+					mappings: []fieldMapping{
+						{
+							measurement: "test",
+							field:       "foo",
+							convert:     func([]byte) interface{} { return int64(0) },
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "single field long real",
+			configs: []metricDefinition{
+				{
+					Name: "test",
+					Fields: []metricFieldDefinition{
+						{
+							Name:    "foo",
+							Address: "DB5.LR3",
+						},
+					},
+				},
+			},
+			expected: []batch{
+				{
+					items: []gos7.S7DataItem{
+						{
+							Area:     0x84,
+							WordLen:  0x06,
+							DBNumber: 5,
+							Start:    3,
+							Amount:   2,
+							Data:     make([]byte, 8),
+						},
+					},
+					mappings: []fieldMapping{
+						{
+							measurement: "test",
+							field:       "foo",
+							convert:     func([]byte) interface{} { return float64(0) },
+						},
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -711,14 +781,14 @@ func TestMetricCollisions(t *testing.T) {
 
 func TestConnectionLoss(t *testing.T) {
 	// Create fake S7 comm server that can accept connects
-	server, err := NewMockServer("127.0.0.1:0")
+	server, err := newMockServer()
 	require.NoError(t, err)
-	defer server.Close()
-	require.NoError(t, server.Start())
+	defer server.close()
+	server.start()
 
 	// Create the plugin and attempt a connection
 	plugin := &S7comm{
-		Server:          server.Addr(),
+		Server:          server.addr(),
 		Rack:            0,
 		Slot:            2,
 		DebugConnection: true,
@@ -742,20 +812,20 @@ func TestConnectionLoss(t *testing.T) {
 	require.NoError(t, plugin.Gather(&acc))
 	require.NoError(t, plugin.Gather(&acc))
 	plugin.Stop()
-	server.Close()
+	server.close()
 
-	require.Equal(t, uint32(3), server.ConnectionAttempts.Load())
+	require.Equal(t, uint32(3), server.connectionAttempts.Load())
 }
 
 func TestStartupErrorBehaviorError(t *testing.T) {
 	// Create fake S7 comm server that can accept connects
-	server, err := NewMockServer("127.0.0.1:0")
+	server, err := newMockServer()
 	require.NoError(t, err)
-	defer server.Close()
+	defer server.close()
 
 	// Setup the plugin and the model to be able to use the startup retry strategy
 	plugin := &S7comm{
-		Server:          server.Addr(),
+		Server:          server.addr(),
 		Rack:            0,
 		Slot:            2,
 		DebugConnection: true,
@@ -784,18 +854,18 @@ func TestStartupErrorBehaviorError(t *testing.T) {
 
 	// Starting the plugin will fail with an error because the server does not listen
 	var acc testutil.Accumulator
-	require.ErrorContains(t, model.Start(&acc), "connecting to \""+server.Addr()+"\" failed")
+	require.ErrorContains(t, model.Start(&acc), "connecting to \""+server.addr()+"\" failed")
 }
 
 func TestStartupErrorBehaviorIgnore(t *testing.T) {
 	// Create fake S7 comm server that can accept connects
-	server, err := NewMockServer("127.0.0.1:0")
+	server, err := newMockServer()
 	require.NoError(t, err)
-	defer server.Close()
+	defer server.close()
 
 	// Setup the plugin and the model to be able to use the startup retry strategy
 	plugin := &S7comm{
-		Server:          server.Addr(),
+		Server:          server.addr(),
 		Rack:            0,
 		Slot:            2,
 		DebugConnection: true,
@@ -828,20 +898,20 @@ func TestStartupErrorBehaviorIgnore(t *testing.T) {
 	// the plugin.
 	var acc testutil.Accumulator
 	err = model.Start(&acc)
-	require.ErrorContains(t, err, "connecting to \""+server.Addr()+"\" failed")
+	require.ErrorContains(t, err, "connecting to \""+server.addr()+"\" failed")
 	var fatalErr *internal.FatalError
 	require.ErrorAs(t, err, &fatalErr)
 }
 
 func TestStartupErrorBehaviorRetry(t *testing.T) {
 	// Create fake S7 comm server that can accept connects
-	server, err := NewMockServer("127.0.0.1:0")
+	server, err := newMockServer()
 	require.NoError(t, err)
-	defer server.Close()
+	defer server.close()
 
 	// Setup the plugin and the model to be able to use the startup retry strategy
 	plugin := &S7comm{
-		Server:          server.Addr(),
+		Server:          server.addr(),
 		Rack:            0,
 		Slot:            2,
 		DebugConnection: true,
@@ -880,37 +950,36 @@ func TestStartupErrorBehaviorRetry(t *testing.T) {
 	require.Equal(t, int64(2), model.StartupErrors.Get())
 
 	// Allow connection in the server, now the connection should succeed
-	require.NoError(t, server.Start())
+	server.start()
 	defer model.Stop()
 	require.NoError(t, model.Gather(&acc))
 }
 
-type MockServer struct {
-	ConnectionAttempts atomic.Uint32
-
-	listener net.Listener
+type mockServer struct {
+	connectionAttempts atomic.Uint32
+	listener           net.Listener
 }
 
-func NewMockServer(addr string) (*MockServer, error) {
-	l, err := net.Listen("tcp", addr)
+func newMockServer() (*mockServer, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
-	return &MockServer{listener: l}, nil
+	return &mockServer{listener: l}, nil
 }
 
-func (s *MockServer) Addr() string {
+func (s *mockServer) addr() string {
 	return s.listener.Addr().String()
 }
 
-func (s *MockServer) Close() error {
+func (s *mockServer) close() error {
 	if s.listener != nil {
 		return s.listener.Close()
 	}
 	return nil
 }
 
-func (s *MockServer) Start() error {
+func (s *mockServer) start() {
 	go func() {
 		defer s.listener.Close()
 		for {
@@ -924,7 +993,7 @@ func (s *MockServer) Start() error {
 			}
 
 			// Count the number of connection attempts
-			s.ConnectionAttempts.Add(1)
+			s.connectionAttempts.Add(1)
 
 			buf := make([]byte, 4096)
 
@@ -961,6 +1030,4 @@ func (s *MockServer) Start() error {
 			conn.Close()
 		}
 	}()
-
-	return nil
 }

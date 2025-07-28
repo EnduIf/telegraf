@@ -7,27 +7,57 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/prometheus/procfs"
-	"github.com/shirou/gopsutil/v3/net"
-	"github.com/shirou/gopsutil/v3/process"
+	gopsnet "github.com/shirou/gopsutil/v4/net"
+	gopsprocess "github.com/shirou/gopsutil/v4/process"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+
+	"github.com/influxdata/telegraf/internal"
 )
 
-func processName(p *process.Process) (string, error) {
+func processName(p *gopsprocess.Process) (string, error) {
 	return p.Exe()
+}
+
+func username(p *gopsprocess.Process) string {
+	// Use the local lookup
+	n, err := p.Username()
+	if err == nil {
+		return n
+	}
+
+	// Exit on errors other than unknown user-ID
+	var uerr user.UnknownUserIdError
+	if !errors.As(err, &uerr) {
+		return ""
+	}
+
+	// Try to run the `id` command on the UID of the process to resolve remote
+	// users such as LDAP or NIS.
+	uid := strconv.Itoa(int(uerr))
+	buf, err := exec.Command("id", "-nu", uid).Output()
+	if n := strings.TrimSpace(string(buf)); err == nil && n != "" {
+		return n
+	}
+
+	// We were either not able to run the command or the user cannot be
+	// resolved so just return the user ID instead.
+	return uid
 }
 
 func queryPidWithWinServiceName(_ string) (uint32, error) {
 	return 0, errors.New("os not supporting win_service option")
 }
 
-func collectMemmap(proc Process, prefix string, fields map[string]any) {
+func collectMemmap(proc process, prefix string, fields map[string]any) {
 	memMapStats, err := proc.MemoryMaps(true)
 	if err == nil && len(*memMapStats) == 1 {
 		memMap := (*memMapStats)[0]
@@ -68,12 +98,12 @@ func findBySystemdUnits(units []string) ([]processGroup, error) {
 		if !ok {
 			return nil, fmt.Errorf("failed to parse PID %v of unit %q: invalid type %T", raw, u, raw)
 		}
-		p, err := process.NewProcess(int32(pid))
+		p, err := gopsprocess.NewProcess(int32(pid))
 		if err != nil {
 			return nil, fmt.Errorf("failed to find process for PID %d of unit %q: %w", pid, u, err)
 		}
 		groups = append(groups, processGroup{
-			processes: []*process.Process{p},
+			processes: []*gopsprocess.Process{p},
 			tags:      map[string]string{"systemd_unit": u.Name},
 		})
 	}
@@ -85,18 +115,14 @@ func findByWindowsServices(_ []string) ([]processGroup, error) {
 	return nil, nil
 }
 
-func collectTotalReadWrite(proc Process) (r, w uint64, err error) {
-	path := procfs.DefaultMountPoint
-	if hp := os.Getenv("HOST_PROC"); hp != "" {
-		path = hp
-	}
-
+func collectTotalReadWrite(proc process) (r, w uint64, err error) {
+	path := internal.GetProcPath()
 	fs, err := procfs.NewFS(path)
 	if err != nil {
 		return 0, 0, err
 	}
 
-	p, err := fs.Proc(int(proc.PID()))
+	p, err := fs.Proc(int(proc.pid()))
 	if err != nil {
 		return 0, 0, err
 	}
@@ -163,11 +189,7 @@ func socketTypeName(t uint8) string {
 }
 
 func mapFdToInode(pid int32, fd uint32) (uint32, error) {
-	root := os.Getenv("HOST_PROC")
-	if root == "" {
-		root = "/proc"
-	}
-
+	root := internal.GetProcPath()
 	fn := fmt.Sprintf("%s/%d/fd/%d", root, pid, fd)
 	link, err := os.Readlink(fn)
 	if err != nil {
@@ -183,7 +205,7 @@ func mapFdToInode(pid int32, fd uint32) (uint32, error) {
 	return uint32(inode), nil
 }
 
-func statsTCP(conns []net.ConnectionStat, family uint8) ([]map[string]interface{}, error) {
+func statsTCP(conns []gopsnet.ConnectionStat, family uint8) ([]map[string]interface{}, error) {
 	if len(conns) == 0 {
 		return nil, nil
 	}
@@ -191,7 +213,7 @@ func statsTCP(conns []net.ConnectionStat, family uint8) ([]map[string]interface{
 	// For TCP we need the inode for each connection to relate the connection
 	// statistics to the actual process socket. Therefore, map the
 	// file-descriptors to inodes using the /proc/<pid>/fd entries.
-	inodes := make(map[uint32]net.ConnectionStat, len(conns))
+	inodes := make(map[uint32]gopsnet.ConnectionStat, len(conns))
 	for _, c := range conns {
 		inode, err := mapFdToInode(c.Pid, c.Fd)
 		if err != nil {
@@ -246,7 +268,7 @@ func statsTCP(conns []net.ConnectionStat, family uint8) ([]map[string]interface{
 	return fieldslist, nil
 }
 
-func statsUDP(conns []net.ConnectionStat, family uint8) ([]map[string]interface{}, error) {
+func statsUDP(conns []gopsnet.ConnectionStat, family uint8) ([]map[string]interface{}, error) {
 	if len(conns) == 0 {
 		return nil, nil
 	}
@@ -254,7 +276,7 @@ func statsUDP(conns []net.ConnectionStat, family uint8) ([]map[string]interface{
 	// For UDP we need the inode for each connection to relate the connection
 	// statistics to the actual process socket. Therefore, map the
 	// file-descriptors to inodes using the /proc/<pid>/fd entries.
-	inodes := make(map[uint32]net.ConnectionStat, len(conns))
+	inodes := make(map[uint32]gopsnet.ConnectionStat, len(conns))
 	for _, c := range conns {
 		inode, err := mapFdToInode(c.Pid, c.Fd)
 		if err != nil {
@@ -305,7 +327,7 @@ func statsUDP(conns []net.ConnectionStat, family uint8) ([]map[string]interface{
 	return fieldslist, nil
 }
 
-func statsUnix(conns []net.ConnectionStat) ([]map[string]interface{}, error) {
+func statsUnix(conns []gopsnet.ConnectionStat) ([]map[string]interface{}, error) {
 	if len(conns) == 0 {
 		return nil, nil
 	}
@@ -313,7 +335,7 @@ func statsUnix(conns []net.ConnectionStat) ([]map[string]interface{}, error) {
 	// We need to read the inode for each connection to relate the connection
 	// statistics to the actual process socket. Therefore, map the
 	// file-descriptors to inodes using the /proc/<pid>/fd entries.
-	inodes := make(map[uint32]net.ConnectionStat, len(conns))
+	inodes := make(map[uint32]gopsnet.ConnectionStat, len(conns))
 	for _, c := range conns {
 		inode, err := mapFdToInode(c.Pid, c.Fd)
 		if err != nil {

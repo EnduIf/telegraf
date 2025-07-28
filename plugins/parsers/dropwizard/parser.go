@@ -2,6 +2,7 @@ package dropwizard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -97,8 +98,8 @@ func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 }
 
 // ParseLine is not supported by the dropwizard format
-func (p *Parser) ParseLine(line string) (telegraf.Metric, error) {
-	return nil, fmt.Errorf("ParseLine not supported: %s, for data format: dropwizard", line)
+func (*Parser) ParseLine(string) (telegraf.Metric, error) {
+	return nil, errors.New("parsing line is not supported by the dropwizard format")
 }
 
 // SetDefaultTags sets the default tags
@@ -195,7 +196,7 @@ func (p *Parser) readDWMetrics(metricType string, dwms interface{}, metrics []te
 			parsed, err := p.seriesParser.Parse([]byte(measurementName))
 			var m telegraf.Metric
 			if err != nil || len(parsed) != 1 {
-				m = metric.New(measurementName, map[string]string{}, map[string]interface{}{}, tm)
+				m = metric.New(measurementName, make(map[string]string), make(map[string]interface{}), tm)
 			} else {
 				m = parsed[0]
 				m.SetTime(tm)

@@ -77,8 +77,7 @@ func (d *Datadog) Connect() error {
 }
 
 func (d *Datadog) convertToDatadogMetric(metrics []telegraf.Metric) []*Metric {
-	tempSeries := []*Metric{}
-
+	tempSeries := make([]*Metric, 0, len(metrics))
 	for _, m := range metrics {
 		if dogMs, err := buildMetrics(m); err == nil {
 			metricTags := buildTags(m.TagList())
@@ -238,7 +237,7 @@ func verifyValue(v interface{}) bool {
 	return true
 }
 
-func isRateable(statsDMetricType string, fieldName string) bool {
+func isRateable(statsDMetricType, fieldName string) bool {
 	switch statsDMetricType {
 	case
 		"counter":
@@ -271,7 +270,7 @@ func (p *Point) setValue(v interface{}) error {
 	return nil
 }
 
-func (d *Datadog) Close() error {
+func (*Datadog) Close() error {
 	return nil
 }
 

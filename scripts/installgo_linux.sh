@@ -2,15 +2,15 @@
 
 set -eux
 
-GO_VERSION="1.22.6"
+GO_VERSION="1.24.5"
 GO_ARCH="linux-amd64"
-# from https://golang.org/dl
-GO_VERSION_SHA="999805bed7d9039ec3da1a53bfbcafc13e367da52aa823cb60b68ba22d44c616"
+# from https://go.dev/dl
+GO_VERSION_SHA="10ad9e86233e74c0f6590fe5426895de6bf388964210eac34a6d83f38918ecdc"
 
 # Download Go and verify Go tarball
 setup_go () {
     echo "installing go"
-    curl -L https://golang.org/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz --output go${GO_VERSION}.${GO_ARCH}.tar.gz
+    curl -L https://go.dev/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz --output go${GO_VERSION}.${GO_ARCH}.tar.gz
     if ! echo "${GO_VERSION_SHA}  go${GO_VERSION}.${GO_ARCH}.tar.gz" | shasum --algorithm 256 --check -; then
         echo "Checksum failed" >&2
         exit 1

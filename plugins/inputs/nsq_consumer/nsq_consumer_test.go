@@ -42,13 +42,13 @@ func TestReadsMetricsFromNSQ(t *testing.T) {
 
 	consumer := &NSQConsumer{
 		Log:                    testutil.Logger{},
-		Server:                 "127.0.0.1:4155",
 		Topic:                  "telegraf",
 		Channel:                "consume",
 		MaxInFlight:            1,
 		MaxUndeliveredMessages: defaultMaxUndeliveredMessages,
 		Nsqd:                   []string{"127.0.0.1:4155"},
 	}
+	require.NoError(t, consumer.Init())
 
 	p := &influx.Parser{}
 	require.NoError(t, p.Init())
@@ -80,7 +80,7 @@ func waitForPoint(acc *testutil.Accumulator, t *testing.T) {
 	defer ticker.Stop()
 	counter := 0
 
-	//nolint:gosimple // for-select used on purpose
+	//nolint:staticcheck // for-select used on purpose
 	for {
 		select {
 		case <-ticker.C:

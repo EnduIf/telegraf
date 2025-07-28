@@ -21,7 +21,6 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/outputs"
-	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
 //go:embed sample.conf
@@ -34,23 +33,25 @@ type File struct {
 	WriteBackInterval config.Duration `toml:"cache_write_back"`
 	MaxCacheSize      config.Size     `toml:"cache_max_size"`
 	UseBatchFormat    bool            `toml:"use_batch_format"`
-	Trace             bool            `toml:"trace"`
+	ForgetFiles       config.Duration `toml:"forget_files_after"`
 	Log               telegraf.Logger `toml:"-"`
 
 	root     *vfs.VFS
 	fscancel context.CancelFunc
 	vfsopts  vfscommon.Options
 
-	templates  []*template.Template
-	serializer serializers.Serializer
+	templates      []*template.Template
+	serializerFunc telegraf.SerializerFunc
+	serializers    map[string]telegraf.Serializer
+	modified       map[string]time.Time
 }
 
 func (*File) SampleConfig() string {
 	return sampleConfig
 }
 
-func (f *File) SetSerializer(serializer serializers.Serializer) {
-	f.serializer = serializer
+func (f *File) SetSerializerFunc(sf telegraf.SerializerFunc) {
+	f.serializerFunc = sf
 }
 
 func (f *File) Init() error {
@@ -70,21 +71,17 @@ func (f *File) Init() error {
 	}
 
 	// Prepare VFS options
-	f.vfsopts = vfscommon.DefaultOpt
+	f.vfsopts = vfscommon.Opt
 	f.vfsopts.CacheMode = vfscommon.CacheModeWrites // required for appends
 	if f.WriteBackInterval > 0 {
-		f.vfsopts.WriteBack = time.Duration(f.WriteBackInterval)
+		f.vfsopts.WriteBack = fs.Duration(f.WriteBackInterval)
 	}
 	if f.MaxCacheSize > 0 {
 		f.vfsopts.CacheMaxSize = fs.SizeSuffix(f.MaxCacheSize)
 	}
 
-	// Redirect logging
-	fs.LogPrint = func(level fs.LogLevel, text string) {
-		if !f.Trace {
-			return
-		}
-		f.Log.Debugf("[%s] %s", level.String(), text)
+	fs.LogOutput = func(level fs.LogLevel, text string) {
+		f.Log.Tracef("[%s] %s", level.String(), text)
 	}
 
 	// Setup custom template functions
@@ -99,6 +96,9 @@ func (f *File) Init() error {
 		}
 		f.templates = append(f.templates, tmpl)
 	}
+
+	f.serializers = make(map[string]telegraf.Serializer)
+	f.modified = make(map[string]time.Time)
 
 	return nil
 }
@@ -123,7 +123,7 @@ func (f *File) Connect() error {
 
 	// Setup the remote virtual filesystem
 	ctx, cancel := context.WithCancel(context.Background())
-	rootfs, err := info.NewFs(ctx, parsed.Name, parsed.Path, fs.ConfigMap(info, parsed.Name, parsed.Config))
+	rootfs, err := info.NewFs(ctx, parsed.Name, parsed.Path, fs.ConfigMap(info.Prefix, info.Options, parsed.Name, parsed.Config))
 	if err != nil {
 		cancel()
 		return fmt.Errorf("creating remote failed: %w", err)
@@ -171,7 +171,12 @@ func (f *File) Write(metrics []telegraf.Metric) error {
 
 	// Group the metrics per output file
 	groups := make(map[string][]telegraf.Metric)
-	for _, m := range metrics {
+	for _, raw := range metrics {
+		m := raw
+		if wm, ok := raw.(telegraf.UnwrappableMetric); ok {
+			m = wm.Unwrap()
+		}
+
 		for _, tmpl := range f.templates {
 			buf.Reset()
 			if err := tmpl.Execute(&buf, m); err != nil {
@@ -186,8 +191,16 @@ func (f *File) Write(metrics []telegraf.Metric) error {
 	// Serialize the metric groups
 	groupBuffer := make(map[string][]byte, len(groups))
 	for fn, fnMetrics := range groups {
+		if _, found := f.serializers[fn]; !found {
+			var err error
+			if f.serializers[fn], err = f.serializerFunc(); err != nil {
+				return fmt.Errorf("creating serializer failed: %w", err)
+			}
+		}
+		serializer := f.serializers[fn]
+
 		if f.UseBatchFormat {
-			serialized, err := f.serializer.SerializeBatch(fnMetrics)
+			serialized, err := serializer.SerializeBatch(fnMetrics)
 			if err != nil {
 				f.Log.Errorf("Could not serialize metrics: %v", err)
 				continue
@@ -195,7 +208,7 @@ func (f *File) Write(metrics []telegraf.Metric) error {
 			groupBuffer[fn] = serialized
 		} else {
 			for _, m := range fnMetrics {
-				serialized, err := f.serializer.Serialize(m)
+				serialized, err := serializer.Serialize(m)
 				if err != nil {
 					f.Log.Debugf("Could not serialize metric: %v", err)
 					continue
@@ -206,6 +219,7 @@ func (f *File) Write(metrics []telegraf.Metric) error {
 	}
 
 	// Write the files
+	t := time.Now()
 	for fn, serialized := range groupBuffer {
 		// Make sure the directory exists
 		dir := filepath.Dir(filepath.ToSlash(fn))
@@ -214,13 +228,13 @@ func (f *File) Write(metrics []telegraf.Metric) error {
 			if filepath.ToSlash(fn) != fn {
 				dir = filepath.FromSlash(dir)
 			}
-			if err := f.root.MkdirAll(dir, f.root.Opt.DirPerms); err != nil {
+			if err := f.root.MkdirAll(dir, os.FileMode(f.root.Opt.DirPerms)); err != nil {
 				return fmt.Errorf("creating dir %q failed: %w", dir, err)
 			}
 		}
 
 		// Open the file for appending or create a new one
-		file, err := f.root.OpenFile(fn, os.O_APPEND|os.O_RDWR|os.O_CREATE, f.root.Opt.FilePerms)
+		file, err := f.root.OpenFile(fn, os.O_APPEND|os.O_RDWR|os.O_CREATE, os.FileMode(f.root.Opt.FilePerms))
 		if err != nil {
 			return fmt.Errorf("opening file %q: %w", fn, err)
 		}
@@ -231,6 +245,18 @@ func (f *File) Write(metrics []telegraf.Metric) error {
 			return fmt.Errorf("writing metrics to file %q failed: %w", fn, err)
 		}
 		file.Close()
+
+		f.modified[fn] = t
+	}
+
+	// Cleanup internal structures for old files
+	if f.ForgetFiles > 0 {
+		for fn, tmod := range f.modified {
+			if t.Sub(tmod) > time.Duration(f.ForgetFiles) {
+				delete(f.serializers, fn)
+				delete(f.modified, fn)
+			}
+		}
 	}
 
 	return nil

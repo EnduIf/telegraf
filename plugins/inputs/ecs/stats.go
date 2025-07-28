@@ -8,10 +8,10 @@ import (
 	"github.com/docker/docker/api/types/container"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/plugins/inputs/docker"
+	"github.com/influxdata/telegraf/plugins/common/docker"
 )
 
-func parseContainerStats(c *Container, acc telegraf.Accumulator, tags map[string]string) {
+func parseContainerStats(c *ecsContainer, acc telegraf.Accumulator, tags map[string]string) {
 	id := c.ID
 	stats := &c.Stats
 	tm := stats.Read
@@ -27,7 +27,7 @@ func parseContainerStats(c *Container, acc telegraf.Accumulator, tags map[string
 	blkstats(id, stats, acc, tags, tm)
 }
 
-func metastats(id string, c *Container, acc telegraf.Accumulator, tags map[string]string, tm time.Time) {
+func metastats(id string, c *ecsContainer, acc telegraf.Accumulator, tags map[string]string, tm time.Time) {
 	metafields := map[string]interface{}{
 		"container_id":   id,
 		"docker_name":    c.DockerName,

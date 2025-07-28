@@ -1,12 +1,17 @@
 # Remote File Output Plugin
 
-This plugin writes telegraf metrics to files in remote locations using the
-[rclone library](https://rclone.org). Currently the following backends are
-supported:
+This plugin writes metrics to files in a remote location using the
+[rclone library][rclone]. Currently the following backends are supported:
 
 - `local`: [Local filesystem](https://rclone.org/local/)
 - `s3`: [Amazon S3 storage providers](https://rclone.org/s3/)
 - `sftp`: [Secure File Transfer Protocol](https://rclone.org/sftp/)
+
+⭐ Telegraf v1.32.0
+🏷️ datastore
+💻 all
+
+[rclone]: https://rclone.org
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -63,9 +68,14 @@ to use them.
   ## Maximum size of the cache on disk (infinite by default)
   # cache_max_size = -1
 
-  ## Output log messages of the underlying library as debug messages
-  ## NOTE: You need to enable this option AND run Telegraf in debug mode!
-  # trace = false
+  ## Forget files after not being touched for longer than the given time
+  ## This is useful to prevent memory leaks when using time-based filenames
+  ## as it allows internal structures to be cleaned up.
+  ## Note: When writing to a file after is has been forgotten, the file is
+  ##       treated as a new file which might cause file-headers to be appended
+  ##       again by certain serializers like CSV.
+  ## By default files will be kept indefinitely.
+  # forget_files_after = "0s"
 
   ## Data format to output.
   ## Each data format has its own unique set of configuration options, read

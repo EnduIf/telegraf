@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestConsulStats(t *testing.T) {
@@ -75,9 +76,16 @@ func TestConsulStats(t *testing.T) {
 				if r.RequestURI == "/v1/agent/metrics" {
 					w.WriteHeader(http.StatusOK)
 					responseKeyMetrics, err := os.ReadFile("testdata/response_key_metrics.json")
-					require.NoError(t, err)
-					_, err = fmt.Fprintln(w, string(responseKeyMetrics))
-					require.NoError(t, err)
+					if err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						t.Error(err)
+						return
+					}
+					if _, err = fmt.Fprintln(w, string(responseKeyMetrics)); err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						t.Error(err)
+						return
+					}
 				}
 			}))
 			defer ts.Close()

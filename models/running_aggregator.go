@@ -25,7 +25,10 @@ type RunningAggregator struct {
 }
 
 func NewRunningAggregator(aggregator telegraf.Aggregator, config *AggregatorConfig) *RunningAggregator {
-	tags := map[string]string{"aggregator": config.Name}
+	tags := map[string]string{
+		"_id":        config.ID,
+		"aggregator": config.Name,
+	}
 	if config.Alias != "" {
 		tags["alias"] = config.Alias
 	}
@@ -70,6 +73,7 @@ func NewRunningAggregator(aggregator telegraf.Aggregator, config *AggregatorConf
 // AggregatorConfig is the common config for all aggregators.
 type AggregatorConfig struct {
 	Name         string
+	Source       string
 	Alias        string
 	ID           string
 	DropOriginal bool
@@ -121,7 +125,7 @@ func (r *RunningAggregator) UpdateWindow(start, until time.Time) {
 }
 
 func (r *RunningAggregator) MakeMetric(telegrafMetric telegraf.Metric) telegraf.Metric {
-	m := makemetric(
+	m := makeMetric(
 		telegrafMetric,
 		r.Config.NameOverride,
 		r.Config.MeasurementPrefix,
@@ -176,6 +180,17 @@ func (r *RunningAggregator) Push(acc telegraf.Accumulator) {
 
 	since := r.periodEnd
 	until := r.periodEnd.Add(r.Config.Period)
+
+	// Check if the next aggregation window will contain "now". This might
+	// not be the case if the machine's clock was adjusted or the machine
+	// hibernated as in those cases the clock might be advanced before or
+	// after the initial aggregation window.
+	nowWall := time.Now().Truncate(-1)
+	if nowWall.Before(since.Truncate(-1)) || nowWall.After(until.Truncate(-1)) {
+		since = nowWall.Truncate(r.Config.Period)
+		until = since.Add(r.Config.Period)
+	}
+
 	r.UpdateWindow(since, until)
 
 	start := time.Now()

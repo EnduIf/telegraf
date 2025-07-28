@@ -245,8 +245,8 @@ func (a *Elasticsearch) Connect() error {
 		}
 	}
 
-	a.IndexName, a.tagKeys = a.GetTagKeys(a.IndexName)
-	a.pipelineName, a.pipelineTagKeys = a.GetTagKeys(a.UsePipeline)
+	a.IndexName, a.tagKeys = GetTagKeys(a.IndexName)
+	a.pipelineName, a.pipelineTagKeys = GetTagKeys(a.UsePipeline)
 
 	return nil
 }
@@ -254,7 +254,7 @@ func (a *Elasticsearch) Connect() error {
 // GetPointID generates a unique ID for a Metric Point
 func GetPointID(m telegraf.Metric) string {
 	var buffer bytes.Buffer
-	//Timestamp(ns),measurement name and Series Hash for compute the final SHA256 based hash ID
+	// Timestamp(ns),measurement name and Series Hash for compute the final SHA256 based hash ID
 
 	buffer.WriteString(strconv.FormatInt(m.Time().Local().UnixNano(), 10))
 	buffer.WriteString(m.Name())
@@ -424,8 +424,8 @@ func (a *Elasticsearch) createNewTemplate(templatePattern string) (*bytes.Buffer
 	return &tmpl, nil
 }
 
-func (a *Elasticsearch) GetTagKeys(indexName string) (string, []string) {
-	tagKeys := []string{}
+func GetTagKeys(indexName string) (string, []string) {
+	tagKeys := make([]string, 0)
 	startTag := strings.Index(indexName, "{{")
 
 	for startTag >= 0 {
@@ -464,8 +464,7 @@ func (a *Elasticsearch) GetIndexName(indexName string, eventTime time.Time, tagK
 		indexName = dateReplacer.Replace(indexName)
 	}
 
-	tagValues := []interface{}{}
-
+	tagValues := make([]interface{}, 0, len(tagKeys))
 	for _, key := range tagKeys {
 		if value, ok := metricTags[key]; ok {
 			tagValues = append(tagValues, value)

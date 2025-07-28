@@ -37,17 +37,19 @@ type requestDefinition struct {
 	Tags              map[string]string        `toml:"tags"`
 }
 
-type ConfigurationPerRequest struct {
-	Requests    []requestDefinition `toml:"request"`
-	workarounds ModbusWorkarounds
-	logger      telegraf.Logger
+type configurationPerRequest struct {
+	Requests []requestDefinition `toml:"request"`
+
+	workarounds         workarounds
+	excludeRegisterType bool
+	logger              telegraf.Logger
 }
 
-func (c *ConfigurationPerRequest) SampleConfigPart() string {
+func (*configurationPerRequest) sampleConfigPart() string {
 	return sampleConfigPartPerRequest
 }
 
-func (c *ConfigurationPerRequest) Check() error {
+func (c *configurationPerRequest) check() error {
 	switch c.workarounds.StringRegisterLocation {
 	case "", "both", "lower", "upper":
 		// Do nothing as those are valid
@@ -211,9 +213,8 @@ func (c *ConfigurationPerRequest) Check() error {
 	return nil
 }
 
-func (c *ConfigurationPerRequest) Process() (map[byte]requestSet, error) {
-	result := map[byte]requestSet{}
-
+func (c *configurationPerRequest) process() (map[byte]requestSet, error) {
+	result := make(map[byte]requestSet, len(c.Requests))
 	for _, def := range c.Requests {
 		// Set default
 		if def.RegisterType == "" {
@@ -230,54 +231,49 @@ func (c *ConfigurationPerRequest) Process() (map[byte]requestSet, error) {
 		// Make sure we have a set to work with
 		set, found := result[def.SlaveID]
 		if !found {
-			set = requestSet{
-				coil:     []request{},
-				discrete: []request{},
-				holding:  []request{},
-				input:    []request{},
-			}
+			set = requestSet{}
 		}
 
 		params := groupingParams{
-			MaxExtraRegisters: def.MaxExtraRegisters,
-			Optimization:      def.Optimization,
-			Tags:              def.Tags,
-			Log:               c.logger,
+			maxExtraRegisters: def.MaxExtraRegisters,
+			optimization:      def.Optimization,
+			tags:              def.Tags,
+			log:               c.logger,
 		}
 		switch def.RegisterType {
 		case "coil":
-			params.MaxBatchSize = maxQuantityCoils
+			params.maxBatchSize = maxQuantityCoils
 			if c.workarounds.OnRequestPerField {
-				params.MaxBatchSize = 1
+				params.maxBatchSize = 1
 			}
-			params.EnforceFromZero = c.workarounds.ReadCoilsStartingAtZero
+			params.enforceFromZero = c.workarounds.ReadCoilsStartingAtZero
 			requests := groupFieldsToRequests(fields, params)
 			set.coil = append(set.coil, requests...)
 		case "discrete":
-			params.MaxBatchSize = maxQuantityDiscreteInput
+			params.maxBatchSize = maxQuantityDiscreteInput
 			if c.workarounds.OnRequestPerField {
-				params.MaxBatchSize = 1
+				params.maxBatchSize = 1
 			}
 			requests := groupFieldsToRequests(fields, params)
 			set.discrete = append(set.discrete, requests...)
 		case "holding":
-			params.MaxBatchSize = maxQuantityHoldingRegisters
+			params.maxBatchSize = maxQuantityHoldingRegisters
 			if c.workarounds.OnRequestPerField {
-				params.MaxBatchSize = 1
+				params.maxBatchSize = 1
 			}
 			requests := groupFieldsToRequests(fields, params)
 			set.holding = append(set.holding, requests...)
 		case "input":
-			params.MaxBatchSize = maxQuantityInputRegisters
+			params.maxBatchSize = maxQuantityInputRegisters
 			if c.workarounds.OnRequestPerField {
-				params.MaxBatchSize = 1
+				params.maxBatchSize = 1
 			}
 			requests := groupFieldsToRequests(fields, params)
 			set.input = append(set.input, requests...)
 		default:
 			return nil, fmt.Errorf("unknown register type %q", def.RegisterType)
 		}
-		if !set.Empty() {
+		if !set.empty() {
 			result[def.SlaveID] = set
 		}
 	}
@@ -285,7 +281,7 @@ func (c *ConfigurationPerRequest) Process() (map[byte]requestSet, error) {
 	return result, nil
 }
 
-func (c *ConfigurationPerRequest) initFields(fieldDefs []requestFieldDefinition, typed bool, byteOrder string) ([]field, error) {
+func (c *configurationPerRequest) initFields(fieldDefs []requestFieldDefinition, typed bool, byteOrder string) ([]field, error) {
 	// Construct the fields from the field definitions
 	fields := make([]field, 0, len(fieldDefs))
 	for _, def := range fieldDefs {
@@ -299,12 +295,12 @@ func (c *ConfigurationPerRequest) initFields(fieldDefs []requestFieldDefinition,
 	return fields, nil
 }
 
-func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinition, typed bool, byteOrder string) (field, error) {
+func (c *configurationPerRequest) newFieldFromDefinition(def requestFieldDefinition, typed bool, byteOrder string) (field, error) {
 	var err error
 
 	fieldLength := uint16(1)
 	if typed {
-		if fieldLength, err = c.determineFieldLength(def.InputType, def.Length); err != nil {
+		if fieldLength, err = determineFieldLength(def.InputType, def.Length); err != nil {
 			return field{}, err
 		}
 	}
@@ -342,7 +338,7 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 			// For non-scaling cases we should choose the output corresponding to the input class
 			// i.e. INT64 for INT*, UINT64 for UINT* etc.
 			var err error
-			if def.OutputType, err = c.determineOutputDatatype(def.InputType); err != nil {
+			if def.OutputType, err = determineOutputDatatype(def.InputType); err != nil {
 				return field{}, err
 			}
 		} else {
@@ -383,20 +379,22 @@ func (c *ConfigurationPerRequest) newFieldFromDefinition(def requestFieldDefinit
 	return f, nil
 }
 
-func (c *ConfigurationPerRequest) fieldID(seed maphash.Seed, def requestDefinition, field requestFieldDefinition) uint64 {
+func (c *configurationPerRequest) fieldID(seed maphash.Seed, def requestDefinition, field requestFieldDefinition) uint64 {
 	var mh maphash.Hash
 	mh.SetSeed(seed)
 
 	mh.WriteByte(def.SlaveID)
 	mh.WriteByte(0)
-	mh.WriteString(def.RegisterType)
-	mh.WriteByte(0)
+	if !c.excludeRegisterType {
+		mh.WriteString(def.RegisterType)
+		mh.WriteByte(0)
+	}
 	mh.WriteString(field.Measurement)
 	mh.WriteByte(0)
 	mh.WriteString(field.Name)
 	mh.WriteByte(0)
 
-	// Tags
+	// tags
 	for k, v := range def.Tags {
 		mh.WriteString(k)
 		mh.WriteByte('=')
@@ -408,7 +406,7 @@ func (c *ConfigurationPerRequest) fieldID(seed maphash.Seed, def requestDefiniti
 	return mh.Sum64()
 }
 
-func (c *ConfigurationPerRequest) determineOutputDatatype(input string) (string, error) {
+func determineOutputDatatype(input string) (string, error) {
 	// Handle our special types
 	switch input {
 	case "INT8L", "INT8H", "INT16", "INT32", "INT64":
@@ -423,7 +421,7 @@ func (c *ConfigurationPerRequest) determineOutputDatatype(input string) (string,
 	return "unknown", fmt.Errorf("invalid input datatype %q for determining output", input)
 }
 
-func (c *ConfigurationPerRequest) determineFieldLength(input string, length uint16) (uint16, error) {
+func determineFieldLength(input string, length uint16) (uint16, error) {
 	// Handle our special types
 	switch input {
 	case "BIT", "INT8L", "INT8H", "UINT8L", "UINT8H":

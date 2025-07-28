@@ -1,8 +1,14 @@
 <!-- markdownlint-disable MD024 -->
 # Modbus Input Plugin
 
-The Modbus plugin collects Discrete Inputs, Coils, Input Registers and Holding
-Registers via Modbus TCP or Modbus RTU/ASCII.
+This plugin collects data from [Modbus][modbus] registers using e.g. Modbus TCP
+or serial interfaces with Modbus RTU or Modbus ASCII.
+
+⭐ Telegraf v1.14.0
+🏷️ iot
+💻 all
+
+[modbus]: https://www.modbus.org/
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -69,6 +75,11 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ##  |---metric   -- define fields on a metric base
   configuration_type = "register"
 
+  ## Exclude the register type tag
+  ## Please note, this will also influence the grouping of metrics as you won't
+  ## see one metric per register type anymore!
+  # exclude_register_type_tag = false
+
   ## --- "register" configuration style ---
 
   ## Measurements
@@ -105,7 +116,6 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ##               INT16, UINT16, INT32, UINT32, INT64, UINT64,
   ##               FLOAT16-IEEE, FLOAT32-IEEE, FLOAT64-IEEE (IEEE 754 binary representation)
   ##               FIXED, UFIXED (fixed-point representation on input)
-  ##               FLOAT32 is a deprecated alias for UFIXED for historic reasons, should be avoided
   ##               STRING (byte-sequence converted to string)
   ## bit         - (optional) bit of the register, ONLY valid for BIT type
   ## scale       - the final numeric variable representation
@@ -407,7 +417,7 @@ This is the original style used by this plugin. It allows a per-register
 configuration for a single slave-device.
 
 > [!NOTE]
-> _For legacy reasons this configuration style is not completely consistent with the other styles. Especially `FLOAT32` which suggests a floating point representation is actually a_ ___Fixed Point___ _data type and should be considered_ ___deprecated___
+> For legacy reasons this configuration style is not completely consistent with the other styles.
 
 #### Usage of `data_type`
 
@@ -440,7 +450,7 @@ modbus data source. For _coil_ and _discrete_ registers only `UINT16` is valid.
 Use these types if your modbus registers contain a value that is encoded in this
 format. These types always include the sign, therefore no variant exists.
 
-##### Fixed Point: `FIXED`, `UFIXED`, (`FLOAT32` - _deprecated_)
+##### Fixed Point: `FIXED`, `UFIXED`
 
 These types are handled as an integer type on input, but are converted to
 floating point representation for further processing (e.g. scaling). Use one of
@@ -455,9 +465,6 @@ representation with N decimal places'.
 Select the type `FIXED` when the input type is declared to hold signed integer
 values. Your documentation of the modbus device should indicate this with a term
 like 'int32 containing fixed-point representation with N decimal places'.
-
-(`FLOAT32` is deprecated and should not be used. `UFIXED` provides the same
-conversion from unsigned values).
 
 ##### String: `STRING`
 
@@ -813,11 +820,6 @@ __Please note:__ These tags take precedence over predefined tags such as `name`,
 
 ---
 
-## Metrics
-
-Metrics are custom and configured using the `discrete_inputs`, `coils`,
-`holding_register` and `input_registers` options.
-
 ## Troubleshooting
 
 ### Strange data
@@ -871,8 +873,13 @@ are required for your device, please let us know.
 In case your device needs a workaround that is not yet implemented, please open
 an issue or submit a pull-request.
 
+## Metrics
+
+The plugin reads the configured registers and constructs metrics based on the
+specified configuration. There is no predefined metric format.
+
 ## Example Output
 
 ```text
-modbus.InputRegisters,host=orangepizero Current=0,Energy=0,Frequency=60,Power=0,PowerFactor=0,Voltage=123.9000015258789 1554079521000000000
+modbus,name=device,slave_id=1,type=holding_register energy=3254.5,power=23.5,frequency=49,97 1701777274026591864
 ```

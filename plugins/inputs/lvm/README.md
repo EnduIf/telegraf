@@ -1,7 +1,14 @@
-# LVM Input Plugin
+# Logical Volume Manager Input Plugin
 
-The Logical Volume Management (LVM) input plugin collects information about
-physical volumes, volume groups, and logical volumes.
+This plugin collects information about physical volumes, volume groups and
+logical volumes from the Logical Volume Management (LVM) of the
+[Linux kernel][kernel].
+
+⭐ Telegraf v1.21.0
+🏷️ system
+💻 linux
+
+[kernel]: https://www.kernel.org/
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -83,7 +90,8 @@ volume (lv):
   - fields
     - size
     - data_percent
-    - meta_percent
+    - metadata_percent
+    - sync_percent
 
 ## Example Output
 

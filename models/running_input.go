@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	GlobalMetricsGathered = selfstat.Register("agent", "metrics_gathered", map[string]string{})
-	GlobalGatherErrors    = selfstat.Register("agent", "gather_errors", map[string]string{})
-	GlobalGatherTimeouts  = selfstat.Register("agent", "gather_timeouts", map[string]string{})
+	GlobalMetricsGathered = selfstat.Register("agent", "metrics_gathered", make(map[string]string))
+	GlobalGatherErrors    = selfstat.Register("agent", "gather_errors", make(map[string]string))
+	GlobalGatherTimeouts  = selfstat.Register("agent", "gather_timeouts", make(map[string]string))
 )
 
 type RunningInput struct {
@@ -24,9 +24,11 @@ type RunningInput struct {
 	log         telegraf.Logger
 	defaultTags map[string]string
 
-	startAcc telegraf.Accumulator
-	started  bool
-	retries  uint64
+	startAcc    telegraf.Accumulator
+	started     bool
+	retries     uint64
+	gatherStart time.Time
+	gatherEnd   time.Time
 
 	MetricsGathered selfstat.Stat
 	GatherTime      selfstat.Stat
@@ -35,7 +37,10 @@ type RunningInput struct {
 }
 
 func NewRunningInput(input telegraf.Input, config *InputConfig) *RunningInput {
-	tags := map[string]string{"input": config.Name}
+	tags := map[string]string{
+		"_id":   config.ID,
+		"input": config.Name,
+	}
 	if config.Alias != "" {
 		tags["alias"] = config.Alias
 	}
@@ -81,12 +86,14 @@ func NewRunningInput(input telegraf.Input, config *InputConfig) *RunningInput {
 // InputConfig is the common config for all inputs.
 type InputConfig struct {
 	Name                 string
+	Source               string
 	Alias                string
 	ID                   string
 	Interval             time.Duration
 	CollectionJitter     time.Duration
 	CollectionOffset     time.Duration
 	Precision            time.Duration
+	TimeSource           string
 	StartupErrorBehavior string
 	LogLevel             string
 
@@ -99,7 +106,7 @@ type InputConfig struct {
 	AlwaysIncludeGlobalTags bool
 }
 
-func (r *RunningInput) metricFiltered(metric telegraf.Metric) {
+func (*RunningInput) metricFiltered(metric telegraf.Metric) {
 	metric.Drop()
 }
 
@@ -109,9 +116,17 @@ func (r *RunningInput) LogName() string {
 
 func (r *RunningInput) Init() error {
 	switch r.Config.StartupErrorBehavior {
-	case "", "error", "retry", "ignore":
+	case "", "error", "retry", "ignore", "probe":
 	default:
 		return fmt.Errorf("invalid 'startup_error_behavior' setting %q", r.Config.StartupErrorBehavior)
+	}
+
+	switch r.Config.TimeSource {
+	case "":
+		r.Config.TimeSource = "metric"
+	case "metric", "collection_start", "collection_end":
+	default:
+		return fmt.Errorf("invalid 'time_source' setting %q", r.Config.TimeSource)
 	}
 
 	if p, ok := r.Input.(telegraf.Initializer); ok {
@@ -150,13 +165,21 @@ func (r *RunningInput) Start(acc telegraf.Accumulator) error {
 		}
 		r.log.Infof("Startup failed: %v; retrying...", err)
 		return nil
-	case "ignore":
+	case "ignore", "probe":
 		return &internal.FatalError{Err: serr}
 	default:
 		r.log.Errorf("Invalid 'startup_error_behavior' setting %q", r.Config.StartupErrorBehavior)
 	}
 
 	return err
+}
+
+func (r *RunningInput) Probe() error {
+	p, ok := r.Input.(telegraf.ProbePlugin)
+	if !ok || r.Config.StartupErrorBehavior != "probe" {
+		return nil
+	}
+	return p.Probe()
 }
 
 func (r *RunningInput) Stop() {
@@ -181,7 +204,7 @@ func (r *RunningInput) MakeMetric(metric telegraf.Metric) telegraf.Metric {
 		return nil
 	}
 
-	makemetric(
+	makeMetric(
 		metric,
 		r.Config.NameOverride,
 		r.Config.MeasurementPrefix,
@@ -203,7 +226,15 @@ func (r *RunningInput) MakeMetric(metric telegraf.Metric) telegraf.Metric {
 		if r.Config.AlwaysIncludeGlobalTags {
 			global = r.defaultTags
 		}
-		makemetric(metric, "", "", "", local, global)
+		makeMetric(metric, "", "", "", local, global)
+	}
+
+	switch r.Config.TimeSource {
+	case "collection_start":
+		metric.SetTime(r.gatherStart)
+	case "collection_end":
+		metric.SetTime(r.gatherEnd)
+	default:
 	}
 
 	r.MetricsGathered.Incr(1)
@@ -228,10 +259,11 @@ func (r *RunningInput) Gather(acc telegraf.Accumulator) error {
 		}
 	}
 
-	start := time.Now()
+	r.gatherStart = time.Now()
 	err := r.Input.Gather(acc)
-	elapsed := time.Since(start)
-	r.GatherTime.Incr(elapsed.Nanoseconds())
+	r.gatherEnd = time.Now()
+
+	r.GatherTime.Incr(r.gatherEnd.Sub(r.gatherStart).Nanoseconds())
 	return err
 }
 

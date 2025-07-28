@@ -3,7 +3,6 @@ package dovecot
 import (
 	"bufio"
 	"bytes"
-	"fmt"
 	"io"
 	"net"
 	"net/textproto"
@@ -59,25 +58,38 @@ func TestDovecotIntegration(t *testing.T) {
 		defer close(waitCh)
 
 		la, err := net.ResolveUnixAddr("unix", addr)
-		require.NoError(t, err)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 
 		l, err := net.ListenUnix("unix", la)
-		require.NoError(t, err)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		defer l.Close()
 		defer os.Remove(addr)
 
 		waitCh <- 0
 		conn, err := l.Accept()
-		require.NoError(t, err)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		defer conn.Close()
 
 		readertp := textproto.NewReader(bufio.NewReader(conn))
-		_, err = readertp.ReadLine()
-		require.NoError(t, err)
+		if _, err = readertp.ReadLine(); err != nil {
+			t.Error(err)
+			return
+		}
 
 		buf := bytes.NewBufferString(sampleGlobal)
-		_, err = io.Copy(conn, buf)
-		require.NoError(t, err)
+		if _, err = io.Copy(conn, buf); err != nil {
+			t.Error(err)
+			return
+		}
 	}()
 
 	// Wait for server to start
@@ -182,7 +194,7 @@ func TestDovecotContainerIntegration(t *testing.T) {
 
 	servicePort := "24242"
 	container := testutil.Container{
-		Image:        "dovecot/dovecot",
+		Image:        "dovecot/dovecot:2.3-latest",
 		ExposedPorts: []string{servicePort},
 		Files: map[string]string{
 			"/etc/dovecot/dovecot.conf": testdata,
@@ -192,14 +204,13 @@ func TestDovecotContainerIntegration(t *testing.T) {
 			wait.ForListeningPort(nat.Port(servicePort)),
 		),
 	}
+	require.NoError(t, container.Start(), "failed to start container")
 	defer container.Terminate()
 
-	err = container.Start()
-	require.NoError(t, err, "failed to start container")
-
-	d := &Dovecot{Servers: []string{
-		fmt.Sprintf("%s:%s", container.Address, container.Ports[servicePort]),
-	}, Type: "global"}
+	d := &Dovecot{
+		Servers: []string{container.Address + ":" + container.Ports[servicePort]},
+		Type:    "global",
+	}
 
 	var acc testutil.Accumulator
 	require.NoError(t, d.Gather(&acc))

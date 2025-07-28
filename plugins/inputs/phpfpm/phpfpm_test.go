@@ -31,7 +31,7 @@ import (
 type statServer struct{}
 
 // We create a fake server to return test data
-func (s statServer) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+func (statServer) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.Header().Set("Content-Length", strconv.Itoa(len(outputSample)))
 	fmt.Fprint(w, outputSample)
@@ -39,16 +39,24 @@ func (s statServer) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 
 func TestPhpFpmGeneratesMetrics_From_Http(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "ok", r.URL.Query().Get("test"))
+		if r.URL.Query().Get("test") != "ok" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "ok", r.URL.Query().Get("test"))
+			return
+		}
+
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Content-Length", strconv.Itoa(len(outputSample)))
-		_, err := fmt.Fprint(w, outputSample)
-		require.NoError(t, err)
+		if _, err := fmt.Fprint(w, outputSample); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer ts.Close()
 
 	url := ts.URL + "?test=ok"
-	r := &phpfpm{
+	r := &Phpfpm{
 		Urls: []string{url},
 		Log:  &testutil.Logger{},
 	}
@@ -85,8 +93,11 @@ func TestPhpFpmGeneratesJSONMetrics_From_Http(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/json")
 		w.Header().Set("Content-Length", strconv.Itoa(len(outputSampleJSON)))
-		_, err := fmt.Fprint(w, string(outputSampleJSON))
-		require.NoError(t, err)
+		if _, err := fmt.Fprint(w, string(outputSampleJSON)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -95,7 +106,7 @@ func TestPhpFpmGeneratesJSONMetrics_From_Http(t *testing.T) {
 	expected, err := testutil.ParseMetricsFromFile("testdata/expected.out", parser)
 	require.NoError(t, err)
 
-	input := &phpfpm{
+	input := &Phpfpm{
 		Urls:   []string{server.URL + "?full&json"},
 		Format: "json",
 		Log:    &testutil.Logger{},
@@ -116,8 +127,8 @@ func TestPhpFpmGeneratesMetrics_From_Fcgi(t *testing.T) {
 	s := statServer{}
 	go fcgi.Serve(tcp, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
-	//Now we tested again above server
-	r := &phpfpm{
+	// Now we tested again above server
+	r := &Phpfpm{
 		Urls: []string{"fcgi://" + tcp.Addr().String() + "/status"},
 		Log:  &testutil.Logger{},
 	}
@@ -167,8 +178,8 @@ func TestPhpFpmTimeout_From_Fcgi(t *testing.T) {
 		time.Sleep(2 * timeout)
 	}()
 
-	//Now we tested again above server
-	r := &phpfpm{
+	// Now we tested again above server
+	r := &Phpfpm{
 		Urls:    []string{"fcgi://" + tcp.Addr().String() + "/status"},
 		Timeout: config.Duration(timeout),
 		Log:     &testutil.Logger{},
@@ -199,8 +210,8 @@ func TestPhpFpmCrashWithTimeout_From_Fcgi(t *testing.T) {
 
 	const timeout = 200 * time.Millisecond
 
-	//Now we tested again above server
-	r := &phpfpm{
+	// Now we tested again above server
+	r := &Phpfpm{
 		Urls:    []string{"fcgi://" + tcpAddress + "/status"},
 		Timeout: config.Duration(timeout),
 		Log:     &testutil.Logger{},
@@ -226,7 +237,7 @@ func TestPhpFpmGeneratesMetrics_From_Socket(t *testing.T) {
 	s := statServer{}
 	go fcgi.Serve(tcp, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
-	r := &phpfpm{
+	r := &Phpfpm{
 		Urls: []string{tcp.Addr().String()},
 		Log:  &testutil.Logger{},
 	}
@@ -278,7 +289,7 @@ func TestPhpFpmGeneratesMetrics_From_Multiple_Sockets_With_Glob(t *testing.T) {
 	go fcgi.Serve(tcp1, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 	go fcgi.Serve(tcp2, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
-	r := &phpfpm{
+	r := &Phpfpm{
 		Urls: []string{"/tmp/test-fpm[\\-0-9]*.sock"},
 		Log:  &testutil.Logger{},
 	}
@@ -329,7 +340,7 @@ func TestPhpFpmGeneratesMetrics_From_Socket_Custom_Status_Path(t *testing.T) {
 	s := statServer{}
 	go fcgi.Serve(tcp, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
-	r := &phpfpm{
+	r := &Phpfpm{
 		Urls: []string{tcp.Addr().String() + ":custom-status-path"},
 		Log:  &testutil.Logger{},
 	}
@@ -363,7 +374,7 @@ func TestPhpFpmGeneratesMetrics_From_Socket_Custom_Status_Path(t *testing.T) {
 // When not passing server config, we default to localhost
 // We just want to make sure we did request stat from localhost
 func TestPhpFpmDefaultGetFromLocalhost(t *testing.T) {
-	r := &phpfpm{
+	r := &Phpfpm{
 		Urls: []string{"http://bad.localhost:62001/status"},
 		Log:  &testutil.Logger{},
 	}
@@ -378,7 +389,7 @@ func TestPhpFpmGeneratesMetrics_Throw_Error_When_Fpm_Status_Is_Not_Responding(t 
 		t.Skip("Skipping long test in short mode")
 	}
 
-	r := &phpfpm{
+	r := &Phpfpm{
 		Urls: []string{"http://aninvalidone"},
 		Log:  &testutil.Logger{},
 	}
@@ -391,7 +402,7 @@ func TestPhpFpmGeneratesMetrics_Throw_Error_When_Fpm_Status_Is_Not_Responding(t 
 }
 
 func TestPhpFpmGeneratesMetrics_Throw_Error_When_Socket_Path_Is_Invalid(t *testing.T) {
-	r := &phpfpm{
+	r := &Phpfpm{
 		Urls: []string{"/tmp/invalid.sock"},
 		Log:  &testutil.Logger{},
 	}
@@ -424,7 +435,7 @@ var outputSampleJSON []byte
 func TestPhpFpmParseJSON_Log_Error_Without_Panic_When_When_JSON_Is_Invalid(t *testing.T) {
 	// Capture the logging output for checking
 	logger := &testutil.CaptureLogger{Name: "inputs.phpfpm"}
-	plugin := &phpfpm{Log: logger}
+	plugin := &Phpfpm{Log: logger}
 	require.NoError(t, plugin.Init())
 
 	// parse valid JSON without panic and without log output
@@ -447,8 +458,8 @@ func TestGatherDespiteUnavailable(t *testing.T) {
 	s := statServer{}
 	go fcgi.Serve(tcp, s) //nolint:errcheck // ignore the returned error as we cannot do anything about it anyway
 
-	//Now we tested again above server
-	r := &phpfpm{
+	// Now we tested again above server
+	r := &Phpfpm{
 		Urls: []string{"fcgi://" + tcp.Addr().String() + "/status", "/lala"},
 		Log:  &testutil.Logger{},
 	}

@@ -562,7 +562,7 @@ func splitLastPathElement(query string) []string {
 
 	// Nothing left
 	if query == "" || query == "/" || query == "//" || query == "." {
-		return []string{}
+		return nil
 	}
 
 	separatorIdx := strings.LastIndex(query, "/")
@@ -629,7 +629,7 @@ func (p *Parser) constructFieldName(root, node dataNode, name string, expand boo
 }
 
 func (p *Parser) debugEmptyQuery(operation string, root dataNode, initialquery string) {
-	if p.Log == nil || !(p.Log.Level().Includes(telegraf.Trace) || p.Trace) { // for backward compatibility
+	if p.Log == nil || (!p.Log.Level().Includes(telegraf.Trace) && !p.Trace) { // for backward compatibility
 		return
 	}
 

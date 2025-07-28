@@ -19,7 +19,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/common/oauth"
 	httpplugin "github.com/influxdata/telegraf/plugins/inputs/http"
 	"github.com/influxdata/telegraf/plugins/parsers/csv"
@@ -32,8 +32,11 @@ import (
 func TestHTTPWithJSONFormat(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
-			_, err := w.Write([]byte(simpleJSON))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(simpleJSON)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -73,8 +76,11 @@ func TestHTTPHeaders(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
 			if r.Header.Get(header) == headerValue {
-				_, err := w.Write([]byte(simpleJSON))
-				require.NoError(t, err)
+				if _, err := w.Write([]byte(simpleJSON)); err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					t.Error(err)
+					return
+				}
 			} else {
 				w.WriteHeader(http.StatusForbidden)
 			}
@@ -107,8 +113,11 @@ func TestHTTPContentLengthHeader(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
 			if r.Header.Get("Content-Length") != "" {
-				_, err := w.Write([]byte(simpleJSON))
-				require.NoError(t, err)
+				if _, err := w.Write([]byte(simpleJSON)); err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					t.Error(err)
+					return
+				}
 			} else {
 				w.WriteHeader(http.StatusForbidden)
 			}
@@ -317,7 +326,7 @@ func TestBodyAndContentEncoding(t *testing.T) {
 	}
 }
 
-type TestHandlerFunc func(t *testing.T, w http.ResponseWriter, r *http.Request)
+type testHandlerFunc func(t *testing.T, w http.ResponseWriter, r *http.Request)
 
 func TestOAuthClientCredentialsGrant(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
@@ -331,8 +340,8 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 	tests := []struct {
 		name         string
 		plugin       *httpplugin.HTTP
-		tokenHandler TestHandlerFunc
-		handler      TestHandlerFunc
+		tokenHandler testHandlerFunc
+		handler      testHandlerFunc
 	}{
 		{
 			name: "no credentials",
@@ -349,7 +358,7 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 			name: "success",
 			plugin: &httpplugin.HTTP{
 				URLs: []string{u.String() + "/write"},
-				HTTPClientConfig: httpconfig.HTTPClientConfig{
+				HTTPClientConfig: common_http.HTTPClientConfig{
 					OAuth2Config: oauth.OAuth2Config{
 						ClientID:     "howdy",
 						ClientSecret: "secret",
@@ -408,8 +417,11 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 func TestHTTPWithCSVFormat(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
-			_, err := w.Write([]byte(simpleCSVWithHeader))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(simpleCSVWithHeader)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -466,13 +478,19 @@ func TestConnectionOverUnixSocket(t *testing.T) {
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/data" {
 			w.Header().Set("Content-Type", "text/csv")
-			_, err := w.Write([]byte(simpleCSVWithHeader))
-			require.NoError(t, err)
+			if _, err := w.Write([]byte(simpleCSVWithHeader)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 
+	// The Maximum length of the socket path is 104/108 characters, path created with t.TempDir() is too long for some cases
+	// (it combines test name with subtest name and some random numbers in the path). Therefore, in this case, it is safer to stick with `os.MkdirTemp()`.
+	//nolint:usetesting // Ignore "os.TempDir() could be replaced by t.TempDir() in TestConnectionOverUnixSocket" finding.
 	unixListenAddr := filepath.Join(os.TempDir(), fmt.Sprintf("httptestserver.%d.sock", rand.Intn(1_000_000)))
 	t.Cleanup(func() { os.Remove(unixListenAddr) })
 

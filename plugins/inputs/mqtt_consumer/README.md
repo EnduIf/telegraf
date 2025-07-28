@@ -1,12 +1,19 @@
 # MQTT Consumer Input Plugin
 
-The [MQTT][mqtt] consumer plugin reads from the specified MQTT topics
-and creates metrics using one of the supported [input data formats][].
+This service plugin consumes messages from [MQTT][mqtt] brokers for the
+configured topics in one of the supported [data formats][data_formats].
+
+⭐ Telegraf v0.10.3
+🏷️ messaging
+💻 all
+
+[mqtt]: https://mqtt.org
+[data_formats]: /docs/DATA_FORMATS_INPUT.md
 
 ## Service Input <!-- @/docs/includes/service_input.md -->
 
 This plugin is a service input. Normal plugins gather metrics determined by the
-interval setting. Service plugins start a service to listens and waits for
+interval setting. Service plugins start a service to listen and wait for
 metrics or events to occur. Service plugins have two key differences from
 normal plugins:
 
@@ -36,6 +43,9 @@ using the `startup_error_behavior` setting. Available values are:
 - `retry`:  Telegraf will try to startup the plugin in every gather or write
             cycle in case of startup errors. The plugin is disabled until
             the startup succeeds.
+- `probe`:  Telegraf will probe the plugin's function (if possible) and disables the plugin
+            in case probing fails. If the plugin does not support probing, Telegraf will
+            behave as if `ignore` was set instead.
 
 ## Secret-store support
 
@@ -264,6 +274,3 @@ This will result in the following metric:
 ```text
 internal_mqtt_consumer host=pop-os version=1.24.0 messages_received=622i payload_size=37942i 1657282270000000000
 ```
-
-[mqtt]: https://mqtt.org
-[input data formats]: /docs/DATA_FORMATS_INPUT.md

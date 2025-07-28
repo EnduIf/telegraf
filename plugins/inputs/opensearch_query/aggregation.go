@@ -4,14 +4,8 @@ import (
 	"encoding/json"
 )
 
-type AggregationRequest interface {
-	AddAggregation(string, string, string) error
-}
-
-type NestedAggregation interface {
-	Nested(string, AggregationRequest)
-	Missing(string)
-	Size(int)
+type aggregationRequest interface {
+	addAggregation(string, string, string) error
 }
 
 type aggregationFunction struct {
@@ -20,9 +14,10 @@ type aggregationFunction struct {
 	size    int
 	missing string
 
-	nested AggregationRequest
+	nested aggregationRequest
 }
 
+// MarshalJSON serializes the aggregationFunction into JSON format.
 func (a *aggregationFunction) MarshalJSON() ([]byte, error) {
 	agg := make(map[string]interface{})
 	field := map[string]interface{}{"field": a.field}
@@ -45,11 +40,11 @@ func (a *aggregationFunction) MarshalJSON() ([]byte, error) {
 	return json.Marshal(agg)
 }
 
-func (a *aggregationFunction) Size(size int) {
+func (a *aggregationFunction) setSize(size int) {
 	a.size = size
 }
 
-func (a *aggregationFunction) Missing(missing string) {
+func (a *aggregationFunction) setMissing(missing string) {
 	a.missing = missing
 }
 

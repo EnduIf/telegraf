@@ -20,23 +20,23 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
+var (
+	defaultTimeout = time.Second * time.Duration(5)
+	validQuery     = map[string]bool{
+		"user": true, "domain": true, "global": true, "ip": true,
+	}
+)
+
 type Dovecot struct {
-	Type    string
-	Filters []string
-	Servers []string
-}
-
-var defaultTimeout = time.Second * time.Duration(5)
-
-var validQuery = map[string]bool{
-	"user": true, "domain": true, "global": true, "ip": true,
+	Type    string   `toml:"type"`
+	Filters []string `toml:"filters"`
+	Servers []string `toml:"servers"`
 }
 
 func (*Dovecot) SampleConfig() string {
 	return sampleConfig
 }
 
-// Reads stats from all configured servers.
 func (d *Dovecot) Gather(acc telegraf.Accumulator) error {
 	if !validQuery[d.Type] {
 		return fmt.Errorf("error: %s is not a valid query type", d.Type)
@@ -56,7 +56,7 @@ func (d *Dovecot) Gather(acc telegraf.Accumulator) error {
 			wg.Add(1)
 			go func(s string, f string) {
 				defer wg.Done()
-				acc.AddError(d.gatherServer(s, acc, d.Type, f))
+				acc.AddError(gatherServer(s, acc, d.Type, f))
 			}(server, filter)
 		}
 	}
@@ -65,7 +65,7 @@ func (d *Dovecot) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-func (d *Dovecot) gatherServer(addr string, acc telegraf.Accumulator, qtype string, filter string) error {
+func gatherServer(addr string, acc telegraf.Accumulator, qtype, filter string) error {
 	var proto string
 
 	if strings.HasPrefix(addr, "/") {
@@ -124,7 +124,7 @@ func (d *Dovecot) gatherServer(addr string, acc telegraf.Accumulator, qtype stri
 	return nil
 }
 
-func gatherStats(buf *bytes.Buffer, acc telegraf.Accumulator, host string, qtype string) {
+func gatherStats(buf *bytes.Buffer, acc telegraf.Accumulator, host, qtype string) {
 	lines := strings.Split(buf.String(), "\n")
 	head := strings.Split(lines[0], "\t")
 	vals := lines[1:]
@@ -160,7 +160,7 @@ func gatherStats(buf *bytes.Buffer, acc telegraf.Accumulator, host string, qtype
 	}
 }
 
-func splitSec(tm string) (sec int64, msec int64) {
+func splitSec(tm string) (sec, msec int64) {
 	var err error
 	ss := strings.Split(tm, ".")
 

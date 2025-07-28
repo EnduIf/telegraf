@@ -1,14 +1,13 @@
 package nats
 
 import (
-	"context"
 	_ "embed"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/docker/go-connections/nat"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -28,6 +27,7 @@ func TestConnectAndWriteIntegration(t *testing.T) {
 	type testConfig struct {
 		name                    string
 		container               testutil.Container
+		externalStream          nats.StreamConfig
 		nats                    *NATS
 		streamConfigCompareFunc func(*testing.T, *jetstream.StreamInfo)
 		wantErr                 bool
@@ -112,6 +112,60 @@ func TestConnectAndWriteIntegration(t *testing.T) {
 				require.Equal(t, int64(500), si.Config.MaxMsgsPerSubject)
 			},
 		},
+		{
+			name: "stream missing with external jetstream",
+			container: testutil.Container{
+				Image:        "nats:latest",
+				ExposedPorts: []string{natsServicePort},
+				Cmd:          []string{"--js"},
+				WaitingFor:   wait.ForListeningPort(nat.Port(natsServicePort)),
+			},
+			nats: &NATS{
+				Name:    "telegraf",
+				Subject: "telegraf",
+				Jetstream: &StreamConfig{
+					Name:                  "my-external-stream",
+					DisableStreamCreation: true,
+				},
+				serializer: &influx.Serializer{},
+				Log:        testutil.Logger{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "stream exists external jetstream",
+			container: testutil.Container{
+				Image:        "nats:latest",
+				ExposedPorts: []string{natsServicePort},
+				Cmd:          []string{"--js"},
+				WaitingFor:   wait.ForListeningPort(nat.Port(natsServicePort)),
+			},
+			externalStream: nats.StreamConfig{
+				Name:         "my-external-stream",
+				Subjects:     []string{"telegraf", "telegraf2"},
+				MaxConsumers: 6,
+				MaxMsgs:      10101,
+			},
+			nats: &NATS{
+				Name:    "telegraf",
+				Subject: "telegraf",
+				Jetstream: &StreamConfig{
+					Name:                  "my-external-stream",
+					DisableStreamCreation: true,
+					MaxMsgs:               10,
+					MaxConsumers:          100,
+				},
+				serializer: &influx.Serializer{},
+				Log:        testutil.Logger{},
+			},
+			streamConfigCompareFunc: func(t *testing.T, si *jetstream.StreamInfo) {
+				require.Equal(t, "my-external-stream", si.Config.Name)
+				require.Equal(t, []string{"telegraf", "telegraf2"}, si.Config.Subjects)
+				require.Equal(t, int(6), si.Config.MaxConsumers)
+				require.Equal(t, int64(10101), si.Config.MaxMsgs)
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -120,8 +174,15 @@ func TestConnectAndWriteIntegration(t *testing.T) {
 			require.NoError(t, err, "failed to start container")
 			defer tc.container.Terminate()
 
-			server := []string{fmt.Sprintf("nats://%s:%s", tc.container.Address, tc.container.Ports[natsServicePort])}
-			tc.nats.Servers = server
+			server := "nats://" + tc.container.Address + ":" + tc.container.Ports[natsServicePort]
+
+			// Create the stream before starting the plugin to simulate
+			// externally managed streams
+			if len(tc.externalStream.Name) > 0 {
+				createStream(t, server, &tc.externalStream)
+			}
+
+			tc.nats.Servers = []string{server}
 			// Verify that we can connect to the NATS daemon
 			require.NoError(t, tc.nats.Init())
 			err = tc.nats.Connect()
@@ -132,9 +193,9 @@ func TestConnectAndWriteIntegration(t *testing.T) {
 			require.NoError(t, err)
 
 			if tc.nats.Jetstream != nil {
-				stream, err := tc.nats.jetstreamClient.Stream(context.Background(), tc.nats.Jetstream.Name)
+				stream, err := tc.nats.jetstreamClient.Stream(t.Context(), tc.nats.Jetstream.Name)
 				require.NoError(t, err)
-				si, err := stream.Info(context.Background())
+				si, err := stream.Info(t.Context())
 				require.NoError(t, err)
 
 				tc.streamConfigCompareFunc(t, si)
@@ -156,6 +217,7 @@ func TestConfigParsing(t *testing.T) {
 		{name: "Valid Default", path: filepath.Join("testcases", "no-js.conf")},
 		{name: "Valid JS", path: filepath.Join("testcases", "js-default.conf")},
 		{name: "Valid JS Config", path: filepath.Join("testcases", "js-config.conf")},
+		{name: "Valid JS Async Publish", path: filepath.Join("testcases", "js-async-pub.conf")},
 		{name: "Subjects warning", path: filepath.Join("testcases", "js-subjects.conf")},
 		{name: "Invalid JS", path: filepath.Join("testcases", "js-no-stream.conf"), wantErr: true},
 	}
@@ -182,4 +244,22 @@ func TestConfigParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func createStream(t *testing.T, server string, cfg *nats.StreamConfig) {
+	t.Helper()
+
+	// Connect to NATS server
+	conn, err := nats.Connect(server)
+	require.NoError(t, err)
+
+	defer func() {
+		require.NoError(t, conn.Drain(), "draining failed")
+	}()
+
+	// Create the stream in the JetStream context
+	js, err := conn.JetStream()
+	require.NoError(t, err)
+	_, err = js.AddStream(cfg)
+	require.NoError(t, err)
 }

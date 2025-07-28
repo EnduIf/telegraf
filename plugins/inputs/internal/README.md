@@ -1,9 +1,13 @@
 # Telegraf Internal Input Plugin
 
-The `internal` plugin collects metrics about the telegraf agent itself.
+This plugin collects metrics about the telegraf agent and its plugins.
 
-Note that some metrics are aggregates across all instances of one type of
-plugin.
+> [!NOTE]
+> Some metrics are aggregates across all instances of a plugin type.
+
+⭐ Telegraf v1.2.0
+🏷️ applications
+💻 all
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -25,12 +29,14 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## If true, collect metrics from Go's runtime.metrics. For a full list see:
   ##   https://pkg.go.dev/runtime/metrics
   # collect_gostats = false
+
+  ## Collect statistics per plugin instance and not per plugin type
+  # per_instance = false
 ```
 
 ## Metrics
 
-memstats are taken from the Go runtime:
-<https://golang.org/pkg/runtime/#MemStats>
+memstats are collected using the [Go runtime framework][memstats]
 
 - internal_memstats
   - alloc_bytes
@@ -85,10 +91,10 @@ plugin and `version=<telegraf_version>`.
 - internal_<plugin_name>
   - individual plugin-specific fields, such as requests counts.
 
-## Tags
-
 All measurements for specific plugins are tagged with information relevant
 to each particular plugin and with `version=<telegraf_version>`.
+
+[memstats]: https://golang.org/pkg/runtime/#MemStats
 
 ## Example Output
 
