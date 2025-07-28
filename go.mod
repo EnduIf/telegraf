@@ -23,6 +23,7 @@ require (
 	github.com/Azure/go-autorest/autorest/adal v0.9.24
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.13
 	github.com/BurntSushi/toml v1.5.0
+	github.com/ClickHouse/clickhouse-go v1.5.4
 	github.com/ClickHouse/clickhouse-go/v2 v2.37.2
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/IBM/nzgo/v12 v12.0.10
@@ -248,6 +249,8 @@ require (
 	modernc.org/sqlite v1.38.0
 	software.sslmate.com/src/go-pkcs12 v0.5.0
 )
+
+require github.com/cloudflare/golz4 v0.0.0-20150217214814-ef862a3cdc58 // indirect
 
 require (
 	cel.dev/expr v0.24.0 // indirect

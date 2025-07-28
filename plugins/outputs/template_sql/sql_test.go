@@ -7,7 +7,7 @@ import (
 func TestSqlTemplating(t *testing.T) {
 	p := newSQL()
 	p.Driver = "pgx"
-	p.Query = "UPDATE :metric SET name=:name"
+	query := "UPDATE $metric SET name=$name"
 	result := "UPDATE $1 SET name=$2"
 
 	valueMap := make(map[string]interface{})
@@ -15,7 +15,7 @@ func TestSqlTemplating(t *testing.T) {
 	valueMap["metric"] = "users"
 	valueMap["unused"] = "unused"
 
-	query, values, err := p.generateQuery(valueMap)
+	query, values, err := p.generateQuery(query, valueMap)
 	if err != nil {
 		t.Error(err)
 	}
@@ -34,13 +34,13 @@ func TestSqlTemplating(t *testing.T) {
 func TestSqlTemplatingFailIfNotInMetric(t *testing.T) {
 	p := newSQL()
 	p.Driver = "pgx"
-	p.Query = "UPDATE :metric SET name=:name"
+	query := "UPDATE $metric SET name=$name"
 
 	valueMap := make(map[string]interface{})
 	valueMap["metric"] = "users"
 	valueMap["unused"] = "unused"
 
-	_, _, err := p.generateQuery(valueMap)
+	_, _, err := p.generateQuery(query, valueMap)
 	if err == nil {
 		t.Error("Expected error when template value is not in metric")
 	}
